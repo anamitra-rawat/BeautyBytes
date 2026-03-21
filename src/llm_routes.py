@@ -22,10 +22,9 @@ def llm_search_decision(client, user_message):
         {
             "role": "system",
             "content": (
-                "You have access to a database of Keeping Up with the Kardashians episode titles, "
-                "descriptions, and IMDB ratings. Search is by a single word in the episode title. "
-                "Reply with exactly: YES followed by one space and ONE word to search (e.g. YES wedding), "
-                "or NO if the question does not need episode data."
+                "You have access to a beauty product catalog. "
+                "If the question needs product data, reply with YES and one search word "
+                "(for example: YES serum). Otherwise reply with NO."
             ),
         },
         {"role": "user", "content": user_message},
@@ -39,7 +38,7 @@ def llm_search_decision(client, user_message):
     if yes_match:
         return True, yes_match.group(1).lower()
     if re.search(r"\bYES\b", content):
-        return True, "Kardashian"
+        return True, "product"
     return False, None
 
 
@@ -61,18 +60,24 @@ def register_chat_route(app, json_search):
         use_search, search_term = llm_search_decision(client, user_message)
 
         if use_search:
-            episodes = json_search(search_term or "Kardashian")
+            products = json_search(search_term or "product")
             context_text = "\n\n---\n\n".join(
-                f"Title: {ep['title']}\nDescription: {ep['descr']}\nIMDB Rating: {ep['imdb_rating']}"
-                for ep in episodes
-            ) or "No matching episodes found."
+                (
+                    f"Name: {product['name']}\n"
+                    f"Brand: {product['brand']}\n"
+                    f"Category: {product['category']}\n"
+                    f"Price: {product['price']}\n"
+                    f"Details: {product['details']}"
+                )
+                for product in products[:8]
+            ) or "No matching products found."
             messages = [
-                {"role": "system", "content": "Answer questions about Keeping Up with the Kardashians using only the episode information provided."},
-                {"role": "user", "content": f"Episode information:\n\n{context_text}\n\nUser question: {user_message}"},
+                {"role": "system", "content": "Answer using only the product information provided."},
+                {"role": "user", "content": f"Product information:\n\n{context_text}\n\nUser question: {user_message}"},
             ]
         else:
             messages = [
-                {"role": "system", "content": "You are a helpful assistant for Keeping Up with the Kardashians questions."},
+                {"role": "system", "content": "You are a helpful BeautyBytes assistant."},
                 {"role": "user", "content": user_message},
             ]
 
