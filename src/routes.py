@@ -26,6 +26,8 @@ STOPWORDS = {
     'most','other','some','such','than','too','very','can','just','also'
 }
 
+_tfidf_index = None
+
 def tokenize(text):
     if not text:
         return []
@@ -101,6 +103,58 @@ def build_tfidf_index(products):
         'N': num_docs,
     }
 
+def cosine_sim(query_vec, doc_vec):
+    score = 0.0
+    for term, query_weight in query_vec.items():
+        if term in doc_vec:
+            score += query_weight * doc_vec[term]
+    return score
+
+def search_products(query, category_filter=None, min_price=None, max_price=None,
+                    min_rating=None, top_k=20):
+    global _tfidf_index
+
+    if _tfidf_index is None:
+        all_products = Product.query.all()
+        _tfidf_index = {
+            'index': build_tfidf_index(all_products),
+            'products': all_products
+        }
+
+    products = _tfidf_index['products']
+    index = _tfidf_index['index']
+    query_vector = build_query_vector(query, index['idf'])
+
+    results = []
+    for doc_id, product in enumerate(products):
+        if category_filter and category_filter.lower() not in product.category.lower():
+            continue
+        if min_price is not None and product.price < min_price:
+            continue
+        if max_price is not None and product.price > max_price:
+            continue
+        if min_rating is not None and (product.rating or 0) < min_rating:
+            continue
+
+        score = cosine_sim(query_vector, index['vectors'][doc_id]) if query_vector else 1.0
+        results.append((score, product))
+
+    results.sort(key=lambda x: (-x[0], -(x[1].rating or 0)))
+
+    return [
+        {**p.to_dict(), 'score': round(score, 4)}
+        for score, p in results[:top_k]
+    ]
+
+def get_categories():
+    rows = db.session.query(Product.category).distinct().order_by(Product.category).all()
+    return sorted([r[0] for r in rows])
+
+def invalidate_index():
+    global _tfidf_index
+    _tfidf_index = None
+
+
 def register_routes(app):
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
@@ -114,11 +168,32 @@ def register_routes(app):
     def config():
         return jsonify({"use_llm": USE_LLM})
 
-    @app.route("/api/episodes")
-    def episodes_search():
-        text = request.args.get("title", "")
-        return jsonify(json_search(text))
+    @app.route("/api/categories")
+    def categories():
+        return jsonify(get_categories())
+
+    @app.route("/api/search")
+    def search():
+        query = request.args.get("q", "").strip()
+        category = request.args.get("category", "").strip() or None
+        min_price = request.args.get("min_price", type=float)
+        max_price = request.args.get("max_price", type=float)
+        min_rating = request.args.get("min_rating", type=float)
+
+        results = search_products(
+            query=query,
+            category_filter=category,
+            min_price=min_price,
+            max_price=max_price,
+            min_rating=min_rating,
+        )
+        return jsonify(results)
+
+    @app.route("/api/products/<int:product_id>")
+    def product_detail(product_id):
+        product = Product.query.get_or_404(product_id)
+        return jsonify(product.to_dict())
 
     if USE_LLM:
         from llm_routes import register_chat_route
-        register_chat_route(app, json_search)
+        register_chat_route(app, search_products)
