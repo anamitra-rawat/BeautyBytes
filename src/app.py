@@ -5,7 +5,7 @@ from flask import Flask
 
 load_dotenv()
 from flask_cors import CORS
-from models import db, Episode, Review
+from models import db, Product
 from routes import register_routes
 
 # src/ directory and project root (one level up)
@@ -18,7 +18,7 @@ app = Flask(__name__,
     static_url_path='')
 CORS(app)
 
-# Configure SQLite database - using 3 slashes for relative path
+
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -35,27 +35,30 @@ def init_db():
         db.create_all()
         
         # Initialize database with data from init.json if empty
-        if Episode.query.count() == 0:
+        if Product.query.count() == 0:
             json_file_path = os.path.join(current_directory, 'init.json')
             with open(json_file_path, 'r') as file:
                 data = json.load(file)
-                for episode_data in data['episodes']:
-                    episode = Episode(
-                        id=episode_data['id'],
-                        title=episode_data['title'],
-                        descr=episode_data['descr']
+                for p in data['products']:
+                    product = Product(
+                        id=p['id'],
+                        original_id=str(p.get('original_id', '')),
+                        name=p['name'],
+                        brand=p['brand'],
+                        category=p['category'],
+                        price=p['price'],
+                        rating=p.get('rating'),
+                        num_reviews=p.get('num_reviews'),
+                        details=p.get('details', ''),
+                        ingredients=p.get('ingredients', ''),
+                        url=p.get('url', ''),
+                        size=p.get('size', ''),
+                        online_only=p.get('online_only', False),
                     )
-                    db.session.add(episode)
-                
-                for review_data in data['reviews']:
-                    review = Review(
-                        id=review_data['id'],
-                        imdb_rating=review_data['imdb_rating']
-                    )
-                    db.session.add(review)
+                    db.session.add(product)
             
             db.session.commit()
-            print("Database initialized with episodes and reviews data")
+            print("Database initialized with Sephora products")
 
 init_db()
 
