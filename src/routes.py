@@ -6,31 +6,55 @@ To enable AI chat, set USE_LLM = True below. See llm_routes.py for AI code.
 import json
 import os
 from flask import send_from_directory, request, jsonify
-from models import db, Episode, Review
+from models import db, Product
+import math
+import re
+from collections import Counter
 
 # ── AI toggle ────────────────────────────────────────────────────────────────
 USE_LLM = False
 # USE_LLM = True
 # ─────────────────────────────────────────────────────────────────────────────
 
+STOPWORDS = {
+    'a','an','the','and','or','but','in','on','at','to','for','of','with',
+    'is','are','was','were','be','been','being','have','has','had','do',
+    'does','did','will','would','could','should','may','might','shall',
+    'this','that','these','those','it','its','by','from','as','into',
+    'through','during','before','after','above','below','between',
+    'not','no','nor','so','yet','both','either','each','few','more',
+    'most','other','some','such','than','too','very','can','just','also'
+}
 
-def json_search(query):
-    if not query or not query.strip():
-        query = "Kardashian"
-    results = db.session.query(Episode, Review).join(
-        Review, Episode.id == Review.id
-    ).filter(
-        Episode.title.ilike(f'%{query}%')
-    ).all()
-    matches = []
-    for episode, review in results:
-        matches.append({
-            'title': episode.title,
-            'descr': episode.descr,
-            'imdb_rating': review.imdb_rating
-        })
-    return matches
+def tokenize(text):
+    if not text:
+        return []
+    tokens = re.findall(r'[a-z]+', text.lower())
+    return [t for t in tokens if t not in STOPWORDS and len(t) > 2]
 
+def product_document_tokens(product):
+    weighted_fields = [
+        (product.name, 3),
+        (product.brand, 1),
+        (product.category, 2),
+        (product.details or '', 1),
+        (product.ingredients or '', 1),
+    ]
+    tokens = []
+    for text, weight in weighted_fields:
+        field_tokens = tokenize(text)
+        if field_tokens:
+            tokens.extend(field_tokens * weight)
+    return tokens
+
+def build_document_corpus(products):
+    return [product_document_tokens(product) for product in products]
+
+def compute_document_frequencies(documents):
+    doc_freq = Counter()
+    for tokens in documents:
+        doc_freq.update(set(tokens))
+    return doc_freq
 
 def register_routes(app):
     @app.route('/', defaults={'path': ''})
