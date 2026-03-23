@@ -1,22 +1,32 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Product } from './types'
 import './App.css'
+import perfumeIcon from "./assets/perfume.png"
 
-const CATEGORY_EMOJIS: Record<string, string> = {
-  'Perfume': '🌸', 'Cologne': '✨', 'Foundation': '💄', 'Lipstick': '💋',
+/*const CATEGORY_EMOJIS: Record<string, string> = {
+  'Perfume': perfumeIcon, 'Cologne': '✨', 'Foundation': '💄', 'Lipstick': '💋',
   'Moisturizers': '💧', 'Face Serums': '🌿', 'Eye Palettes': '👁️',
   'Mascara': '✨', 'Highlighter': '✨', 'Blush': '🌹', 'Concealer': '🎨',
   'Face Masks': '🧖', 'Shampoo': '🌺', 'Conditioner': '💆',
   'Hair Styling Products': '💇', 'Face Wash & Cleansers': '🫧',
   'Face Primer': '🪄', 'default': '💅'
-}
+}*/
+
+const CATEGORY_EMOJIS: Record<string, string | JSX.Element> = {
+  Perfume: <img src={perfumeIcon} className="perfume-icon" />,
+  Cologne: <img src={perfumeIcon} className="perfume-icon" />,
+  Foundation: '💄',
+  Lipstick: '💋',
+  Moisturizers: '💧',
+  default: '💅'
+};
 
 function StarRating({ rating }: { rating: number | null }) {
   if (!rating) return null
   const stars = Math.round(rating)
   return (
     <div className="stars">
-      {[1,2,3,4,5].map(i => (
+      {[1, 2, 3, 4, 5].map(i => (
         <span key={i} className={i <= stars ? 'star filled' : 'star'}>{i <= stars ? '★' : '☆'}</span>
       ))}
       <span className="rating-num">{rating.toFixed(1)}</span>
@@ -109,12 +119,14 @@ export default function App() {
   const [searched, setSearched] = useState(false)
   const [selected, setSelected] = useState<Product | null>(null)
   const [showFilters, setShowFilters] = useState(false)
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
 
   useEffect(() => {
     fetch('/api/categories')
       .then(r => r.json())
       .then(setCategories)
-      .catch(() => {})
+      .catch(() => { })
   }, [])
 
   const doSearch = useCallback(async () => {
@@ -127,23 +139,35 @@ export default function App() {
       if (minPrice) params.set('min_price', minPrice)
       if (maxPrice) params.set('max_price', maxPrice)
       if (minRating) params.set('min_rating', minRating)
-      const res = await fetch(`/api/search?${params}`)
+      params.set('page', String(page))
+      params.set('per_page', '20')
+      //const res = await fetch(`/api/search?${params}`)
+      const res = await fetch(`/api/search?${params.toString()}`)
       const data = await res.json()
-      setResults(data)
+
+      setResults(data.results || [])
+      setTotal(data.total || 0)
     } catch {
       setResults([])
+      setTotal(0)
     } finally {
       setLoading(false)
     }
-  }, [query, category, minPrice, maxPrice, minRating])
+  }, [query, category, minPrice, maxPrice, minRating, page])
+
+  useEffect(() => {
+    doSearch()
+  }, [doSearch])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') doSearch()
+    if (e.key === 'Enter') {
+      setPage(1)
+    }
   }
 
   const clearAll = () => {
-    setQuery(''); setCategory(''); setMinPrice(''); setMaxPrice(''); setMinRating('')
-    setResults([]); setSearched(false)
+    setQuery(''); setCategory(''); setMinPrice(''); setMaxPrice(''); setMinRating('');
+    setPage(1); setTotal(0); setResults([]); setSearched(false)
   }
 
   const QUICK_SEARCHES = [
@@ -183,25 +207,26 @@ export default function App() {
                 <button className="clear-input" onClick={() => setQuery('')}>✕</button>
               )}
             </div>
-            <button className="search-btn" onClick={doSearch}>
+            <button className="search-btn" onClick={() => { setPage(1) }}>
               Search
             </button>
           </div>
 
-          {!searched && (
-            <div className="quick-searches">
-              <span className="quick-label">Try:</span>
-              {QUICK_SEARCHES.map(q => (
-                <button key={q} className="quick-chip" onClick={() => {
-                  setQuery(q); setTimeout(() => {
-                    setQuery(q)
-                  }, 0)
-                }}>
-                  {q}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="quick-searches">
+            <span className="quick-label">Try:</span>
+            {QUICK_SEARCHES.map(q => (
+              <button
+                key={q}
+                className="quick-chip"
+                onClick={() => {
+                  setQuery(q)
+                  setPage(1)
+                }}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
 
           <div className="filter-row">
             <button
@@ -263,7 +288,7 @@ export default function App() {
           <div className="results-header">
             <span className="results-count">
               {results.length > 0
-                ? `${results.length} products found`
+                ? `${total} products found`
                 : 'No products found. Try another search.'}
             </span>
             {query && <span className="results-query">for "{query}"</span>}
@@ -278,12 +303,36 @@ export default function App() {
           </div>
         )}
 
+        {!loading && total > 20 && (
+          <div className="pagination">
+            <button
+              className="page-btn"
+              onClick={() => setPage(page - 1)}
+              disabled={page === 1}
+            >
+              Previous
+            </button>
+
+            <span className="page-info">
+              Page {page} of {Math.ceil(total / 20)}
+            </span>
+
+            <button
+              className="page-btn"
+              onClick={() => setPage(page + 1)}
+              disabled={page >= Math.ceil(total / 20)}
+            >
+              Next
+            </button>
+          </div>
+        )}
+
         {!loading && !searched && (
           <div className="empty-state">
             <div className="empty-flowers">🌸 💄 ✨ 🌹 💅</div>
             <h3>Search the catalog</h3>
             <p>Browse 500+ Sephora products with natural language.<br />
-            Search by product type, ingredient, brand, or use case.</p>
+              Search by product type, ingredient, brand, or use case.</p>
           </div>
         )}
       </main>
