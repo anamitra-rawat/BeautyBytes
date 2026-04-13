@@ -854,3 +854,107 @@
   font-size: 0.72rem;
   padding: 3px 10px;
 }
+
+/* ── Skin concerns selector ──────────────────────────────────────────── */
+.skin-concerns-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-light);
+}
+
+.skin-concerns-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+}
+
+.skin-concerns-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.concern-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--rose-pale);
+  border: 1.5px solid var(--border);
+  color: var(--text-soft);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.concern-chip:hover {
+  background: var(--rose-light);
+  border-color: var(--rose);
+}
+
+.concern-chip.active {
+  background: linear-gradient(135deg, var(--rose-deep), var(--mauve));
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(236, 72, 153, 0.3);
+}
+
+.concern-icon {
+  font-size: 0.85rem;
+}
+
+.concern-note {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+  font-style: italic;
+}
+
+/* ── Ingredient tags (good/bad) ──────────────────────────────────────── */
+.card-ingredients-good,
+.card-ingredients-bad {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.ingredient-tag {
+  font-size: 0.6rem;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.ingredient-tag.good {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+}
+
+.ingredient-tag.bad {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+/* Modal ingredient list */
+.ingredient-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ingredient-list .ingredient-tag {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 12px;
+}

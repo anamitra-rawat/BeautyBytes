@@ -96,6 +96,65 @@ SITUATIONAL_EXPANSIONS = {
 }
 
 
+# ── Skin concern ingredient rules ────────────────────────────────────────────
+# Each concern has:
+#   "boost": ingredients/terms that are GOOD for this concern (score boosted)
+#   "penalize": ingredients/terms that are BAD for this concern (score reduced)
+SKIN_CONCERNS = {
+    "acne": {
+        "boost": ["salicylic", "benzoyl", "niacinamide", "tea tree", "zinc",
+                  "clay", "charcoal", "bha", "aha", "glycolic", "non-comedogenic",
+                  "oil-free", "pore", "blemish", "clear", "clean", "purifying"],
+        "penalize": ["coconut oil", "cocoa butter", "lanolin", "heavy",
+                     "rich", "thick", "buttery", "petroleum", "mineral oil"],
+    },
+    "dry_skin": {
+        "boost": ["hyaluronic", "ceramide", "glycerin", "shea", "squalane",
+                  "jojoba", "avocado", "argan", "moisturizing", "hydrating",
+                  "nourishing", "cream", "butter", "balm", "oil", "rich",
+                  "emollient", "barrier"],
+        "penalize": ["alcohol denat", "witch hazel", "mattifying", "oil-free",
+                     "astringent", "salicylic", "benzoyl"],
+    },
+    "oily_skin": {
+        "boost": ["salicylic", "niacinamide", "clay", "charcoal", "zinc",
+                  "mattifying", "matte", "oil-free", "lightweight", "gel",
+                  "pore", "shine", "control", "bha", "tea tree"],
+        "penalize": ["coconut oil", "shea butter", "rich", "heavy", "thick",
+                     "buttery", "cream", "oil", "petroleum"],
+    },
+    "sensitive": {
+        "boost": ["aloe", "chamomile", "oat", "centella", "cica", "allantoin",
+                  "gentle", "soothing", "calming", "fragrance-free", "hypoallergenic",
+                  "mild", "soft", "barrier", "ceramide"],
+        "penalize": ["fragrance", "parfum", "alcohol denat", "retinol", "glycolic",
+                     "aha", "bha", "essential oil", "menthol", "eucalyptus"],
+    },
+    "aging": {
+        "boost": ["retinol", "retinal", "peptide", "collagen", "vitamin c",
+                  "ascorbic", "niacinamide", "hyaluronic", "resveratrol",
+                  "firming", "anti-aging", "renewal", "repair", "wrinkle",
+                  "elastin", "antioxidant", "coq10"],
+        "penalize": [],
+    },
+    "dark_spots": {
+        "boost": ["vitamin c", "ascorbic", "niacinamide", "arbutin", "kojic",
+                  "tranexamic", "azelaic", "licorice", "brightening",
+                  "dark spot", "radiance", "even tone", "luminous", "glow"],
+        "penalize": [],
+    },
+    "redness": {
+        "boost": ["centella", "cica", "aloe", "chamomile", "green tea",
+                  "niacinamide", "azelaic", "oat", "allantoin", "calming",
+                  "soothing", "anti-redness", "gentle", "barrier", "ceramide"],
+        "penalize": ["retinol", "glycolic", "aha", "fragrance", "alcohol denat",
+                     "menthol", "peppermint", "eucalyptus", "essential oil"],
+    },
+}
+
+CONCERN_BOOST_WEIGHT = 0.15    # How much to boost score for good ingredients
+CONCERN_PENALIZE_WEIGHT = 0.10 # How much to reduce score for bad ingredients
+
 _search_index = None
 
 # ── SVD configuration ────────────────────────────────────────────────────────
@@ -284,18 +343,61 @@ def find_matched_keywords(product, query_tokens_in_vocab):
     return matched
 
 
+def compute_concern_adjustment(product, skin_concerns):
+    """Compute a score adjustment based on skin concerns.
+
+    Returns (adjustment_float, list_of_good_matches, list_of_bad_matches)
+    """
+    if not skin_concerns:
+        return 0.0, [], []
+
+    product_text = " ".join([
+        product.name or "",
+        product.details or "",
+        product.ingredients or "",
+    ]).lower()
+
+    total_boost = 0.0
+    total_penalty = 0.0
+    good_matches = []
+    bad_matches = []
+
+    for concern in skin_concerns:
+        rules = SKIN_CONCERNS.get(concern)
+        if not rules:
+            continue
+
+        for term in rules["boost"]:
+            if term.lower() in product_text:
+                total_boost += CONCERN_BOOST_WEIGHT
+                if term not in good_matches:
+                    good_matches.append(term)
+
+        for term in rules["penalize"]:
+            if term.lower() in product_text:
+                total_penalty += CONCERN_PENALIZE_WEIGHT
+                if term not in bad_matches:
+                    bad_matches.append(term)
+
+    # Cap the boost/penalty so they don't overwhelm the SVD score
+    adjustment = min(total_boost, 0.4) - min(total_penalty, 0.3)
+    return adjustment, good_matches, bad_matches
+
+
 def search_products(
     query,
     category_filter=None,
     min_price=None,
     max_price=None,
     min_rating=None,
+    skin_concerns=None,
     top_k=20,
 ):
     global _search_index
 
     # Empty query with no filters = return nothing
-    if not query and not category_filter and min_price is None and max_price is None and min_rating is None:
+    has_concerns = skin_concerns and len(skin_concerns) > 0
+    if not query and not category_filter and min_price is None and max_price is None and min_rating is None and not has_concerns:
         return {"results": [], "query_info": {}}
 
     if _search_index is None:
@@ -313,6 +415,7 @@ def search_products(
         "expanded_query": "",
         "expansion_labels": [],
         "vocab_tokens": [],
+        "skin_concerns": skin_concerns or [],
     }
 
     if query:
@@ -344,17 +447,26 @@ def search_products(
             score = 1.0
             matched_kw = []
 
-        results.append((score, product, matched_kw))
+        # Apply skin concern adjustments
+        concern_adj, good_ingredients, bad_ingredients = compute_concern_adjustment(
+            product, skin_concerns
+        )
+        adjusted_score = score + concern_adj
 
-    results.sort(key=lambda x: (-x[0], -(x[1].rating or 0)))
+        results.append((adjusted_score, score, product, matched_kw, good_ingredients, bad_ingredients))
+
+    results.sort(key=lambda x: (-x[0], -(x[2].rating or 0)))
 
     serialized = [
         {
             **p.to_dict(),
-            "score": round(score, 4),
+            "score": round(adj_score, 4),
+            "base_score": round(base_score, 4),
             "matched_keywords": matched_kw,
+            "good_ingredients": good_ing,
+            "bad_ingredients": bad_ing,
         }
-        for score, p, matched_kw in results
+        for adj_score, base_score, p, matched_kw, good_ing, bad_ing in results
     ]
 
     if top_k is not None:
@@ -399,6 +511,8 @@ def register_routes(app):
         min_price = request.args.get("min_price", type=float)
         max_price = request.args.get("max_price", type=float)
         min_rating = request.args.get("min_rating", type=float)
+        skin_concerns_raw = request.args.get("skin_concerns", "").strip()
+        skin_concerns = [c.strip() for c in skin_concerns_raw.split(",") if c.strip()] or None
 
         page = max(request.args.get("page", default=1, type=int), 1)
         per_page = request.args.get("per_page", default=20, type=int)
@@ -410,6 +524,7 @@ def register_routes(app):
             min_price=min_price,
             max_price=max_price,
             min_rating=min_rating,
+            skin_concerns=skin_concerns,
             top_k=None,
         )
 

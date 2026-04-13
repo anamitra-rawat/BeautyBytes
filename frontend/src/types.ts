@@ -12,7 +12,10 @@ export interface Product {
   size: string
   online_only: boolean
   score?: number
+  base_score?: number
   matched_keywords?: string[]
+  good_ingredients?: string[]
+  bad_ingredients?: string[]
 }
 
 export interface QueryInfo {
@@ -20,4 +23,5 @@ export interface QueryInfo {
   expanded_query: string
   expansion_labels: string[]
   vocab_tokens: string[]
+  skin_concerns: string[]
 }

@@ -59,6 +59,24 @@ function ProductCard({ product, onClick }: { product: Product; onClick: () => vo
           </div>
         )}
 
+        {/* Good ingredients for skin concerns */}
+        {product.good_ingredients && product.good_ingredients.length > 0 && (
+          <div className="card-ingredients-good">
+            {product.good_ingredients.slice(0, 3).map(ing => (
+              <span key={ing} className="ingredient-tag good">✓ {ing}</span>
+            ))}
+          </div>
+        )}
+
+        {/* Bad ingredients for skin concerns */}
+        {product.bad_ingredients && product.bad_ingredients.length > 0 && (
+          <div className="card-ingredients-bad">
+            {product.bad_ingredients.slice(0, 2).map(ing => (
+              <span key={ing} className="ingredient-tag bad">✗ {ing}</span>
+            ))}
+          </div>
+        )}
+
         <div className="card-footer">
           <span className="card-price">${product.price.toFixed(2)}</span>
           {product.num_reviews && (
@@ -103,6 +121,30 @@ function ProductModal({ product, onClose }: { product: Product; onClose: () => v
             <div className="keyword-list">
               {product.matched_keywords.map(kw => (
                 <span key={kw} className="keyword-tag">{kw}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Good ingredients for concerns */}
+        {product.good_ingredients && product.good_ingredients.length > 0 && (
+          <div className="modal-section">
+            <div className="section-label">Good For Your Skin</div>
+            <div className="ingredient-list">
+              {product.good_ingredients.map(ing => (
+                <span key={ing} className="ingredient-tag good">✓ {ing}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Bad ingredients for concerns */}
+        {product.bad_ingredients && product.bad_ingredients.length > 0 && (
+          <div className="modal-section">
+            <div className="section-label">May Not Be Ideal</div>
+            <div className="ingredient-list">
+              {product.bad_ingredients.map(ing => (
+                <span key={ing} className="ingredient-tag bad">✗ {ing}</span>
               ))}
             </div>
           </div>
@@ -156,6 +198,24 @@ export default function App() {
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [queryInfo, setQueryInfo] = useState<QueryInfo | null>(null)
+  const [skinConcerns, setSkinConcerns] = useState<string[]>([])
+
+  const SKIN_CONCERN_OPTIONS = [
+    { key: 'acne', label: 'Acne', icon: '🔴' },
+    { key: 'dry_skin', label: 'Dry Skin', icon: '🏜️' },
+    { key: 'oily_skin', label: 'Oily Skin', icon: '💧' },
+    { key: 'sensitive', label: 'Sensitive', icon: '🌸' },
+    { key: 'aging', label: 'Aging', icon: '⏳' },
+    { key: 'dark_spots', label: 'Dark Spots', icon: '🔵' },
+    { key: 'redness', label: 'Redness', icon: '🩹' },
+  ]
+
+  const toggleConcern = (key: string) => {
+    setSkinConcerns(prev =>
+      prev.includes(key) ? prev.filter(c => c !== key) : [...prev, key]
+    )
+    setPage(1)
+  }
 
   useEffect(() => {
     fetch('/api/categories')
@@ -164,7 +224,7 @@ export default function App() {
       .catch(() => { })
   }, [])
 
-  const hasAnyInput = query || category || minPrice || maxPrice || minRating
+  const hasAnyInput = query || category || minPrice || maxPrice || minRating || skinConcerns.length > 0
 
   const doSearch = useCallback(async () => {
     // Don't search if there's no input at all
@@ -185,6 +245,7 @@ export default function App() {
       if (minPrice) params.set('min_price', minPrice)
       if (maxPrice) params.set('max_price', maxPrice)
       if (minRating) params.set('min_rating', minRating)
+      if (skinConcerns.length > 0) params.set('skin_concerns', skinConcerns.join(','))
       params.set('page', String(page))
       params.set('per_page', '20')
       const res = await fetch(`/api/search?${params.toString()}`)
@@ -200,7 +261,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [query, category, minPrice, maxPrice, minRating, page, hasAnyInput])
+  }, [query, category, minPrice, maxPrice, minRating, skinConcerns, page, hasAnyInput])
 
   useEffect(() => {
     doSearch()
@@ -214,7 +275,7 @@ export default function App() {
 
   const clearAll = () => {
     setQuery(''); setCategory(''); setMinPrice(''); setMaxPrice(''); setMinRating('');
-    setPage(1); setTotal(0); setResults([]); setSearched(false); setQueryInfo(null)
+    setPage(1); setTotal(0); setResults([]); setSearched(false); setQueryInfo(null); setSkinConcerns([])
   }
 
   const QUICK_SEARCHES = [
@@ -286,7 +347,7 @@ export default function App() {
             >
               ⚙ Filters {showFilters ? '▲' : '▼'}
             </button>
-            {(category || minPrice || maxPrice || minRating) && (
+            {(category || minPrice || maxPrice || minRating || skinConcerns.length > 0) && (
               <button className="clear-filters" onClick={clearAll}>Clear all</button>
             )}
           </div>
@@ -324,6 +385,28 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* Skin Concerns Selector */}
+          <div className="skin-concerns-section">
+            <div className="skin-concerns-label">Skin Concerns (optional)</div>
+            <div className="skin-concerns-chips">
+              {SKIN_CONCERN_OPTIONS.map(({ key, label, icon }) => (
+                <button
+                  key={key}
+                  className={`concern-chip ${skinConcerns.includes(key) ? 'active' : ''}`}
+                  onClick={() => toggleConcern(key)}
+                >
+                  <span className="concern-icon">{icon}</span>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {skinConcerns.length > 0 && (
+              <div className="concern-note">
+                Results will prioritize products with ingredients suited for your concerns
+              </div>
+            )}
+          </div>
         </div>
 
         {loading && (
