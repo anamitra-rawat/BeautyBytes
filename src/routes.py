@@ -159,7 +159,103 @@ _search_index = None
 
 # ── SVD configuration ────────────────────────────────────────────────────────
 SVD_NUM_COMPONENTS = 100  # Number of latent dimensions to keep
-SCORE_THRESHOLD = 0.05    # Minimum similarity score to include in results
+SCORE_THRESHOLD = 0.15    # Minimum similarity score to include in results
+
+# ── Keyword / category boost weights ─────────────────────────────────────────
+CATEGORY_MATCH_BOOST = 0.35   # Big boost when query topic matches product category
+KEYWORD_NAME_BOOST = 0.06     # Per-keyword boost for matches in product name/category
+
+# Product-type keywords — if any of these appear in the query, the search
+# will strongly prefer products whose category matches the keyword.
+PRODUCT_TYPE_KEYWORDS = {
+    "lipstick": ["lipstick", "lip"],
+    "lip gloss": ["lip gloss", "gloss"],
+    "lip liner": ["lip liner"],
+    "lip stain": ["lip stain", "stain"],
+    "lip balm": ["lip balm", "balm"],
+    "foundation": ["foundation"],
+    "concealer": ["concealer"],
+    "primer": ["primer"],
+    "setting spray": ["setting spray"],
+    "bb & cc cream": ["bb cream", "cc cream", "bb", "cc"],
+    "eyeshadow": ["eyeshadow", "eye shadow"],
+    "eye palettes": ["eye palette", "eyeshadow palette"],
+    "eyeliner": ["eyeliner", "eye liner"],
+    "mascara": ["mascara"],
+    "brow": ["brow", "eyebrow"],
+    "blush": ["blush"],
+    "bronzer": ["bronzer"],
+    "highlighter": ["highlighter", "highlight"],
+    "moisturizers": ["moisturizer", "moisturiser", "cream"],
+    "cleanser": ["cleanser", "face wash", "cleansing"],
+    "serum": ["serum"],
+    "toner": ["toner"],
+    "mask": ["mask", "face mask"],
+    "sunscreen": ["sunscreen", "spf", "sun"],
+    "perfume": ["perfume", "fragrance", "scent", "parfum", "eau"],
+    "cologne": ["cologne"],
+    "shampoo": ["shampoo"],
+    "conditioner": ["conditioner"],
+}
+
+# Reverse map: for each category key, which actual product categories to allow
+# (handles cases where category names in DB differ from the keys above)
+CATEGORY_ALIASES = {
+    "lipstick": ["lipstick", "liquid lipstick"],
+    "lip gloss": ["lip gloss"],
+    "lip liner": ["lip liner"],
+    "lip stain": ["lip stain"],
+    "lip balm": ["lip balm & treatment", "lip balms & treatments"],
+    "foundation": ["foundation", "tinted moisturizer", "bb & cc cream"],
+    "concealer": ["concealer"],
+    "primer": ["primer", "face primer", "eye primer"],
+    "setting spray": ["setting spray & powder"],
+    "bb & cc cream": ["bb & cc cream", "tinted moisturizer"],
+    "eyeshadow": ["eyeshadow", "eye palettes", "eye sets"],
+    "eye palettes": ["eye palettes", "eyeshadow", "eye sets"],
+    "eyeliner": ["eyeliner"],
+    "mascara": ["mascara"],
+    "brow": ["eyebrow"],
+    "blush": ["blush", "cheek palettes"],
+    "bronzer": ["bronzer"],
+    "highlighter": ["highlighter", "cheek palettes"],
+    "moisturizers": ["moisturizers", "moisturizer & treatments", "tinted moisturizer"],
+    "cleanser": ["face wash", "face wash & cleansers"],
+    "serum": ["face serums", "skincare", "skincare sets"],
+    "toner": ["toners", "mists & essences"],
+    "mask": ["face masks", "sheet masks"],
+    "sunscreen": ["sunscreen", "face sunscreen", "body sunscreen"],
+    "perfume": ["perfume", "cologne", "fragrance", "body mist & hair mist", "perfume gift sets", "rollerballs & travel size"],
+    "cologne": ["cologne", "perfume", "fragrance"],
+    "shampoo": ["shampoo"],
+    "conditioner": ["conditioner"],
+}
+
+
+def detect_query_product_types(query_text):
+    """Detect which product categories the user is asking for.
+
+    Returns a set of lowercase category names that should be allowed,
+    or an empty set if no specific product type was detected.
+    """
+    if not query_text:
+        return set()
+
+    lower_query = query_text.lower()
+    allowed_categories = set()
+
+    # Check longest triggers first to avoid partial matches
+    for category_key, triggers in sorted(
+        PRODUCT_TYPE_KEYWORDS.items(), key=lambda x: -len(x[0])
+    ):
+        for trigger in sorted(triggers, key=lambda t: -len(t)):
+            if trigger in lower_query:
+                # Add all allowed categories for this product type
+                aliases = CATEGORY_ALIASES.get(category_key, [category_key])
+                allowed_categories.update(aliases)
+                break
+
+    return allowed_categories
 
 
 def tokenize(text):
@@ -384,6 +480,41 @@ def compute_concern_adjustment(product, skin_concerns):
     return adjustment, good_matches, bad_matches
 
 
+def compute_keyword_boost(product, query_text):
+    """Give a score boost for products whose category/name matches the query topic.
+
+    If the user says 'lipstick for a red carpet event', this function strongly
+    boosts products in the Lipstick category and products with 'lipstick' in
+    the name. This ensures the core product type dominates results.
+    """
+    if not query_text:
+        return 0.0
+
+    lower_query = query_text.lower()
+    product_cat = (product.category or "").lower()
+    product_name = (product.name or "").lower()
+    boost = 0.0
+
+    for category_key, triggers in PRODUCT_TYPE_KEYWORDS.items():
+        for trigger in triggers:
+            if trigger in lower_query:
+                # Category match — strongest signal
+                if category_key == product_cat or trigger in product_cat:
+                    boost += CATEGORY_MATCH_BOOST
+                # Name match
+                if trigger in product_name:
+                    boost += KEYWORD_NAME_BOOST
+                break  # Only count each category once
+
+    # Also boost for each raw query token in the product name/category
+    query_tokens = set(tokenize(query_text))
+    name_cat_tokens = set(re.findall(r"[a-z]+", product_cat + " " + product_name))
+    direct_hits = query_tokens & name_cat_tokens
+    boost += len(direct_hits) * KEYWORD_NAME_BOOST
+
+    return min(boost, 0.6)  # Cap so it doesn't overwhelm everything
+
+
 def search_products(
     query,
     category_filter=None,
@@ -426,8 +557,17 @@ def search_products(
     else:
         q_svd = None
 
+    # Detect product type from query and hard-filter to matching categories
+    detected_types = detect_query_product_types(query) if query else set()
+
     results = []
     for doc_id, product in enumerate(products):
+        # Hard filter: if query mentions a product type, only show that type
+        if detected_types:
+            product_cat_lower = product.category.lower()
+            if product_cat_lower not in detected_types:
+                continue
+
         if category_filter and category_filter.lower() not in product.category.lower():
             continue
         if min_price is not None and product.price < min_price:
@@ -447,11 +587,14 @@ def search_products(
             score = 1.0
             matched_kw = []
 
+        # Apply keyword/category boost for topic relevance
+        kw_boost = compute_keyword_boost(product, query) if query else 0.0
+
         # Apply skin concern adjustments
         concern_adj, good_ingredients, bad_ingredients = compute_concern_adjustment(
             product, skin_concerns
         )
-        adjusted_score = score + concern_adj
+        adjusted_score = score + kw_boost + concern_adj
 
         results.append((adjusted_score, score, product, matched_kw, good_ingredients, bad_ingredients))
 
