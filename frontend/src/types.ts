@@ -25,3 +25,6 @@ export interface QueryInfo {
   vocab_tokens: string[]
   skin_concerns: string[]
 }
+
+export type SortOption = 'relevance' | 'price_asc' | 'price_desc' | 'rating'
+export type ViewMode = 'rows' | 'grid'
