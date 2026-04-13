@@ -12,4 +12,12 @@ export interface Product {
   size: string
   online_only: boolean
   score?: number
+  matched_keywords?: string[]
+}
+
+export interface QueryInfo {
+  original_query: string
+  expanded_query: string
+  expansion_labels: string[]
+  vocab_tokens: string[]
 }

@@ -744,3 +744,113 @@
     font-size: 0.95rem;
   }
 }
+
+/* ── Score bar on cards ──────────────────────────────────────────────── */
+.card-score {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.score-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.score-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: var(--rose-light);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--rose), var(--rose-deep));
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.score-value {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--mauve);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── Keyword tags on cards ───────────────────────────────────────────── */
+.card-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.keyword-tag {
+  background: var(--rose-pale);
+  border: 1px solid var(--border);
+  color: var(--rose-deep);
+  font-size: 0.62rem;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 10px;
+  letter-spacing: 0.02em;
+}
+
+/* ── Expansion banner ────────────────────────────────────────────────── */
+.expansion-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, var(--rose-pale), #fef3c7);
+  border: 1px solid #fcd34d;
+  border-radius: 12px;
+  padding: 10px 16px;
+  margin: 16px 0 4px;
+  font-size: 0.82rem;
+  color: var(--text-soft);
+}
+
+.expansion-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.expansion-label {
+  color: var(--mauve);
+  margin: 0 2px;
+}
+
+/* ── Modal score + keywords ──────────────────────────────────────────── */
+.modal-score {
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.modal-score strong {
+  color: var(--mauve);
+}
+
+.modal-keywords {
+  margin-bottom: 16px;
+}
+
+.keyword-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  justify-content: center;
+}
+
+.keyword-list .keyword-tag {
+  font-size: 0.72rem;
+  padding: 3px 10px;
+}

@@ -1,16 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Product } from './types'
+import { Product, QueryInfo } from './types'
 import './App.css'
 import perfumeIcon from "./assets/perfume.png"
-
-/*const CATEGORY_EMOJIS: Record<string, string> = {
-  'Perfume': perfumeIcon, 'Cologne': '✨', 'Foundation': '💄', 'Lipstick': '💋',
-  'Moisturizers': '💧', 'Face Serums': '🌿', 'Eye Palettes': '👁️',
-  'Mascara': '✨', 'Highlighter': '✨', 'Blush': '🌹', 'Concealer': '🎨',
-  'Face Masks': '🧖', 'Shampoo': '🌺', 'Conditioner': '💆',
-  'Hair Styling Products': '💇', 'Face Wash & Cleansers': '🫧',
-  'Face Primer': '🪄', 'default': '💅'
-}*/
 
 const CATEGORY_EMOJIS: Record<string, string | JSX.Element> = {
   Perfume: <img src={perfumeIcon} className="perfume-icon" />,
@@ -44,6 +35,30 @@ function ProductCard({ product, onClick }: { product: Product; onClick: () => vo
         <div className="card-name">{product.name}</div>
         <div className="card-brand">{product.brand}</div>
         <StarRating rating={product.rating} />
+
+        {/* Similarity score */}
+        {product.score !== undefined && product.score !== null && (
+          <div className="card-score">
+            <span className="score-label">Relevance:</span>
+            <span className="score-bar-wrap">
+              <span
+                className="score-bar-fill"
+                style={{ width: `${Math.max(0, Math.min(100, product.score * 100))}%` }}
+              />
+            </span>
+            <span className="score-value">{(product.score * 100).toFixed(1)}%</span>
+          </div>
+        )}
+
+        {/* Matched keywords */}
+        {product.matched_keywords && product.matched_keywords.length > 0 && (
+          <div className="card-keywords">
+            {product.matched_keywords.slice(0, 5).map(kw => (
+              <span key={kw} className="keyword-tag">{kw}</span>
+            ))}
+          </div>
+        )}
+
         <div className="card-footer">
           <span className="card-price">${product.price.toFixed(2)}</span>
           {product.num_reviews && (
@@ -73,6 +88,25 @@ function ProductModal({ product, onClose }: { product: Product; onClose: () => v
         <h2 className="modal-name">{product.name}</h2>
         <div className="modal-brand">{product.brand}</div>
         <StarRating rating={product.rating} />
+
+        {/* Score in modal */}
+        {product.score !== undefined && product.score !== null && (
+          <div className="modal-score">
+            Similarity Score: <strong>{(product.score * 100).toFixed(1)}%</strong>
+          </div>
+        )}
+
+        {/* Matched keywords in modal */}
+        {product.matched_keywords && product.matched_keywords.length > 0 && (
+          <div className="modal-keywords">
+            <span className="section-label">Matched Keywords</span>
+            <div className="keyword-list">
+              {product.matched_keywords.map(kw => (
+                <span key={kw} className="keyword-tag">{kw}</span>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="modal-meta">
           <div className="meta-pill price">${product.price.toFixed(2)}</div>
@@ -121,6 +155,7 @@ export default function App() {
   const [showFilters, setShowFilters] = useState(false)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  const [queryInfo, setQueryInfo] = useState<QueryInfo | null>(null)
 
   useEffect(() => {
     fetch('/api/categories')
@@ -129,7 +164,18 @@ export default function App() {
       .catch(() => { })
   }, [])
 
+  const hasAnyInput = query || category || minPrice || maxPrice || minRating
+
   const doSearch = useCallback(async () => {
+    // Don't search if there's no input at all
+    if (!hasAnyInput) {
+      setResults([])
+      setTotal(0)
+      setSearched(false)
+      setQueryInfo(null)
+      return
+    }
+
     setLoading(true)
     setSearched(true)
     try {
@@ -141,19 +187,20 @@ export default function App() {
       if (minRating) params.set('min_rating', minRating)
       params.set('page', String(page))
       params.set('per_page', '20')
-      //const res = await fetch(`/api/search?${params}`)
       const res = await fetch(`/api/search?${params.toString()}`)
       const data = await res.json()
 
       setResults(data.results || [])
       setTotal(data.total || 0)
+      setQueryInfo(data.query_info || null)
     } catch {
       setResults([])
       setTotal(0)
+      setQueryInfo(null)
     } finally {
       setLoading(false)
     }
-  }, [query, category, minPrice, maxPrice, minRating, page])
+  }, [query, category, minPrice, maxPrice, minRating, page, hasAnyInput])
 
   useEffect(() => {
     doSearch()
@@ -167,12 +214,16 @@ export default function App() {
 
   const clearAll = () => {
     setQuery(''); setCategory(''); setMinPrice(''); setMaxPrice(''); setMinRating('');
-    setPage(1); setTotal(0); setResults([]); setSearched(false)
+    setPage(1); setTotal(0); setResults([]); setSearched(false); setQueryInfo(null)
   }
 
   const QUICK_SEARCHES = [
-    'luminous foundation', 'anti-aging serum', 'floral perfume',
-    'matte lipstick', 'shimmery eyeshadow', 'hydrating moisturizer'
+    'lipstick for a red carpet event',
+    'eyeshadow for a glam look',
+    'moisturizer for dry skin',
+    'perfume for a date night',
+    'foundation for oily skin',
+    'anti-aging serum',
   ]
 
   return (
@@ -198,7 +249,7 @@ export default function App() {
               <input
                 className="search-input"
                 type="text"
-                placeholder="Search by product, brand, ingredient, or category"
+                placeholder="Try: 'lipstick for a red carpet event' or 'moisturizer for dry skin'"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -284,6 +335,19 @@ export default function App() {
           </div>
         )}
 
+        {/* Query expansion info banner */}
+        {!loading && searched && queryInfo && queryInfo.expansion_labels && queryInfo.expansion_labels.length > 0 && (
+          <div className="expansion-banner">
+            <span className="expansion-icon">✨</span>
+            <span>
+              Detected context: {queryInfo.expansion_labels.map(label => (
+                <strong key={label} className="expansion-label">"{label}"</strong>
+              ))}
+              {' '}— expanded search to include related product terms
+            </span>
+          </div>
+        )}
+
         {!loading && searched && (
           <div className="results-header">
             <span className="results-count">
@@ -332,7 +396,8 @@ export default function App() {
             <div className="empty-flowers">🌸 💄 ✨ 🌹 💅</div>
             <h3>Search the catalog</h3>
             <p>Browse 500+ Sephora products with natural language.<br />
-              Search by product type, ingredient, brand, or use case.</p>
+              Try situational searches like "lipstick for a red carpet event"<br />
+              or "moisturizer for dry skin".</p>
           </div>
         )}
       </main>

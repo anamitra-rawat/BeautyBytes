@@ -1,5 +1,12 @@
 """
-Routes: React app serving and episode search API.
+Routes: React app serving and product search API.
+
+Search pipeline:
+  1. TF-IDF vectorization of product documents (name, brand, category, details, ingredients)
+  2. SVD (Truncated) for Latent Semantic Analysis — captures semantic similarity
+  3. Situational query expansion — maps contextual phrases to product-relevant terms
+  4. Cosine similarity in the reduced SVD space
+  5. Score threshold filtering — only returns meaningfully relevant results
 
 To enable AI chat, set USE_LLM = True below. See llm_routes.py for AI code.
 """
@@ -11,6 +18,7 @@ from models import db, Product
 import math
 import re
 from collections import Counter
+import numpy as np
 
 # ── AI toggle ────────────────────────────────────────────────────────────────
 USE_LLM = False
@@ -18,86 +26,88 @@ USE_LLM = False
 # ─────────────────────────────────────────────────────────────────────────────
 
 STOPWORDS = {
-    "a",
-    "an",
-    "the",
-    "and",
-    "or",
-    "but",
-    "in",
-    "on",
-    "at",
-    "to",
-    "for",
-    "of",
-    "with",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "being",
-    "have",
-    "has",
-    "had",
-    "do",
-    "does",
-    "did",
-    "will",
-    "would",
-    "could",
-    "should",
-    "may",
-    "might",
-    "shall",
-    "this",
-    "that",
-    "these",
-    "those",
-    "it",
-    "its",
-    "by",
-    "from",
-    "as",
-    "into",
-    "through",
-    "during",
-    "before",
-    "after",
-    "above",
-    "below",
-    "between",
-    "not",
-    "no",
-    "nor",
-    "so",
-    "yet",
-    "both",
-    "either",
-    "each",
-    "few",
-    "more",
-    "most",
-    "other",
-    "some",
-    "such",
-    "than",
-    "too",
-    "very",
-    "can",
-    "just",
-    "also",
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "shall", "this", "that", "these", "those",
+    "it", "its", "by", "from", "as", "into", "through", "during", "before",
+    "after", "above", "below", "between", "not", "no", "nor", "so", "yet",
+    "both", "either", "each", "few", "more", "most", "other", "some",
+    "such", "than", "too", "very", "can", "just", "also", "looking",
+    "want", "need", "good", "best", "great", "nice", "like", "get",
+    "something", "thing", "things", "look", "make", "event",
 }
 
-_tfidf_index = None
+# ── Situational query expansion ──────────────────────────────────────────────
+# Maps contextual/situational phrases to product-relevant terms that actually
+# appear in product names, details, and ingredients. This bridges the gap
+# between how users *describe what they want* and how products are *described*.
+SITUATIONAL_EXPANSIONS = {
+    # Event / occasion contexts
+    "red carpet":       ["luxe", "long-wear", "bold", "shimmer", "satin", "matte", "full", "coverage", "pigment", "rich", "velvet"],
+    "date night":       ["sultry", "long-wear", "fragrance", "glow", "shimmer", "subtle", "rose", "warm", "soft"],
+    "wedding":          ["long-wear", "waterproof", "natural", "radiant", "dewy", "luminous", "soft", "lasting", "gentle"],
+    "party":            ["glitter", "shimmer", "bold", "sparkle", "long-wear", "vibrant", "metallic", "pigment"],
+    "office":           ["natural", "subtle", "lightweight", "matte", "neutral", "nude", "soft", "sheer"],
+    "everyday":         ["natural", "lightweight", "sheer", "nude", "soft", "gentle", "light"],
+    "beach":            ["waterproof", "sunscreen", "spf", "lightweight", "natural", "bronzer", "sun", "water"],
+    "festival":         ["glitter", "bold", "sparkle", "vibrant", "shimmer", "color", "bright"],
+    "prom":             ["sparkle", "shimmer", "long-wear", "radiant", "glow", "luminous"],
+    "interview":        ["natural", "neutral", "matte", "subtle", "soft", "nude", "clean"],
+    "brunch":           ["natural", "dewy", "glow", "light", "fresh", "soft", "sheer"],
+
+    # Style / aesthetic contexts
+    "glam":             ["shimmer", "bold", "sparkle", "dramatic", "luxe", "metallic", "full", "coverage", "pigment", "rich"],
+    "glam look":        ["shimmer", "bold", "sparkle", "dramatic", "luxe", "metallic", "pigment", "rich"],
+    "natural look":     ["natural", "sheer", "lightweight", "dewy", "nude", "tinted", "soft", "light"],
+    "no makeup":        ["natural", "sheer", "tinted", "lightweight", "nude", "soft", "light", "bare"],
+    "dewy":             ["dewy", "glow", "luminous", "radiant", "hydrating", "moisture"],
+    "matte look":       ["matte", "oil", "free", "long-wear", "velvet", "powder", "shine"],
+    "smokey eye":       ["eyeshadow", "dark", "smoky", "blend", "dramatic", "charcoal", "black", "palette", "shadow"],
+    "bold lip":         ["lipstick", "vibrant", "pigment", "matte", "red", "berry", "color", "rich"],
+    "soft glam":        ["neutral", "shimmer", "natural", "warm", "bronze", "peach", "subtle", "glow"],
+    "glass skin":       ["hydrating", "dewy", "serum", "luminous", "glow", "moisturizer", "radiant", "water"],
+    "clean girl":       ["natural", "dewy", "sheer", "lightweight", "nude", "subtle", "tinted", "balm"],
+
+    # Skin concern contexts
+    "acne":             ["salicylic", "acid", "oil", "free", "blemish", "clear", "pore", "clean", "gel"],
+    "anti aging":       ["retinol", "peptide", "collagen", "firming", "wrinkle", "renewal", "repair", "serum"],
+    "anti-aging":       ["retinol", "peptide", "collagen", "firming", "wrinkle", "renewal", "repair", "serum"],
+    "dry skin":         ["hydrating", "moisturizing", "nourishing", "cream", "hyaluronic", "rich", "butter", "oil", "balm"],
+    "oily skin":        ["oil", "free", "matte", "lightweight", "gel", "pore", "shine", "control", "salicylic"],
+    "sensitive skin":   ["gentle", "fragrance", "free", "soothing", "calming", "aloe", "soft", "mild"],
+    "dark spots":       ["vitamin", "brightening", "niacinamide", "radiance", "tone", "even", "serum"],
+    "sun protection":   ["spf", "sunscreen", "broad", "spectrum", "sun", "protection", "uv"],
+    "redness":          ["calming", "soothing", "green", "gentle", "aloe", "sensitive", "repair"],
+
+    # Seasonal contexts
+    "summer":           ["lightweight", "spf", "waterproof", "bronzer", "glow", "fresh", "dewy", "sun", "water"],
+    "winter":           ["hydrating", "rich", "nourishing", "cream", "moisture", "repair", "balm", "butter", "oil"],
+    "fall":             ["warm", "berry", "plum", "bronze", "copper", "spice", "deep", "rich"],
+    "spring":           ["fresh", "light", "pink", "peach", "natural", "floral", "dewy", "soft"],
+
+    # Fragrance contexts
+    "romantic scent":   ["floral", "rose", "jasmine", "soft", "warm", "vanilla", "musk", "parfum", "eau"],
+    "romantic":         ["floral", "rose", "jasmine", "soft", "warm", "vanilla", "musk", "parfum"],
+    "fresh scent":      ["citrus", "clean", "aquatic", "green", "light", "crisp", "bergamot", "fresh"],
+    "sexy":             ["musk", "amber", "oud", "warm", "spicy", "sensual", "vanilla", "noir", "intense"],
+    "masculine":        ["woody", "cedar", "vetiver", "leather", "tobacco", "spice", "oud", "homme"],
+    "floral":           ["rose", "jasmine", "peony", "lily", "floral", "blossom", "petal", "garden"],
+}
+
+
+_search_index = None
+
+# ── SVD configuration ────────────────────────────────────────────────────────
+SVD_NUM_COMPONENTS = 100  # Number of latent dimensions to keep
+SCORE_THRESHOLD = 0.05    # Minimum similarity score to include in results
 
 
 def tokenize(text):
     if not text:
         return []
     tokens = re.findall(r"[a-z]+", text.lower())
-    return [t for t in tokens if t not in STOPWORDS and len(t) > 2]
+    return [t for t in tokens if t not in STOPWORDS and len(t) > 1]
 
 
 def product_document_tokens(product):
@@ -116,72 +126,162 @@ def product_document_tokens(product):
     return tokens
 
 
-def build_document_corpus(products):
-    return [product_document_tokens(product) for product in products]
+def expand_query(query_text):
+    """Expand a situational query by injecting related product terms.
+
+    Checks the query for known situational phrases and appends relevant
+    product-vocabulary terms. The original query terms are preserved so
+    exact matches still score highly, but the expansion lets the SVD
+    space pick up on latent connections.
+
+    Returns (expanded_query_string, list_of_expansion_labels_matched)
+    """
+    if not query_text:
+        return query_text, []
+
+    lower_query = query_text.lower()
+    expansion_terms = []
+    matched_labels = []
+
+    # Check for multi-word phrases first (longer phrases take priority)
+    for phrase, terms in sorted(SITUATIONAL_EXPANSIONS.items(), key=lambda x: -len(x[0])):
+        if phrase in lower_query:
+            expansion_terms.extend(terms)
+            matched_labels.append(phrase)
+
+    if expansion_terms:
+        # Deduplicate while preserving order
+        seen = set()
+        unique_terms = []
+        for t in expansion_terms:
+            if t not in seen:
+                seen.add(t)
+                unique_terms.append(t)
+        # Append expansion terms to the original query
+        return query_text + " " + " ".join(unique_terms), matched_labels
+
+    return query_text, []
 
 
-def compute_document_frequencies(documents):
+def build_search_index(products):
+    """Build TF-IDF matrix then apply truncated SVD for LSA."""
+    documents = [product_document_tokens(p) for p in products]
+    num_docs = len(documents)
+
+    # ── Build vocabulary ──────────────────────────────────────────────────
     doc_freq = Counter()
     for tokens in documents:
         doc_freq.update(set(tokens))
-    return doc_freq
 
+    vocab = {term: idx for idx, term in enumerate(sorted(doc_freq.keys()))}
+    vocab_size = len(vocab)
 
-def compute_idf(doc_freq, num_docs):
-    return {
-        term: math.log((num_docs + 1) / (freq + 1)) + 1
-        for term, freq in doc_freq.items()
-    }
+    # ── IDF vector ────────────────────────────────────────────────────────
+    idf = np.ones(vocab_size)
+    for term, idx in vocab.items():
+        idf[idx] = math.log((num_docs + 1) / (doc_freq[term] + 1)) + 1
 
-
-def compute_document_vectors(documents, idf):
-    vectors = []
-    for tokens in documents:
+    # ── TF-IDF matrix  (num_docs x vocab_size) ───────────────────────────
+    tfidf_matrix = np.zeros((num_docs, vocab_size))
+    for doc_id, tokens in enumerate(documents):
         term_counts = Counter(tokens)
         total_terms = len(tokens) or 1
-        vector = {}
         for term, count in term_counts.items():
-            vector[term] = (count / total_terms) * idf.get(term, 1.0)
-        norm = math.sqrt(sum(weight * weight for weight in vector.values())) or 1.0
-        vectors.append({term: weight / norm for term, weight in vector.items()})
-    return vectors
+            if term in vocab:
+                col = vocab[term]
+                tfidf_matrix[doc_id, col] = (count / total_terms) * idf[col]
 
+    # L2-normalize each row
+    row_norms = np.linalg.norm(tfidf_matrix, axis=1, keepdims=True)
+    row_norms[row_norms == 0] = 1.0
+    tfidf_matrix /= row_norms
 
-def build_query_vector(query, idf):
-    query_tokens = tokenize(query) if query else []
-    if not query_tokens:
-        return {}
+    # ── Truncated SVD ─────────────────────────────────────────────────────
+    k = min(SVD_NUM_COMPONENTS, min(tfidf_matrix.shape) - 1)
+    if k < 1:
+        k = 1
 
-    query_term_counts = Counter(query_tokens)
-    total_terms = len(query_tokens)
-    query_vector = {}
-    for term, count in query_term_counts.items():
-        query_vector[term] = (count / total_terms) * idf.get(term, 1.0)
+    U, S, Vt = np.linalg.svd(tfidf_matrix, full_matrices=False)
+    U_k = U[:, :k]
+    S_k = S[:k]
+    Vt_k = Vt[:k, :]
 
-    norm = math.sqrt(sum(weight * weight for weight in query_vector.values())) or 1.0
-    return {term: weight / norm for term, weight in query_vector.items()}
+    # Document vectors in reduced space: U_k * diag(S_k)
+    doc_vectors_svd = U_k * S_k[np.newaxis, :]
 
+    # L2-normalize document vectors in SVD space
+    doc_norms = np.linalg.norm(doc_vectors_svd, axis=1, keepdims=True)
+    doc_norms[doc_norms == 0] = 1.0
+    doc_vectors_svd /= doc_norms
 
-def build_tfidf_index(products):
-    documents = build_document_corpus(products)
-    num_docs = len(documents)
-    doc_freq = compute_document_frequencies(documents)
-    idf = compute_idf(doc_freq, num_docs)
-    vectors = compute_document_vectors(documents, idf)
+    # Also keep original tfidf for keyword matching info
     return {
-        "vectors": vectors,
+        "vocab": vocab,
         "idf": idf,
-        "df": doc_freq,
-        "N": num_docs,
+        "tfidf_matrix": tfidf_matrix,
+        "doc_vectors_svd": doc_vectors_svd,
+        "S_k": S_k,
+        "Vt_k": Vt_k,
+        "num_docs": num_docs,
     }
 
 
-def cosine_sim(query_vec, doc_vec):
-    score = 0.0
-    for term, query_weight in query_vec.items():
-        if term in doc_vec:
-            score += query_weight * doc_vec[term]
-    return score
+def build_query_vector_svd(query_text, index):
+    """Project a query into the SVD latent space.
+
+    Returns (q_svd_vector, expanded_query_string, matched_expansion_labels, query_tokens_in_vocab)
+    """
+    expanded, matched_labels = expand_query(query_text)
+    tokens = tokenize(expanded) if expanded else []
+    if not tokens:
+        return None, query_text, [], []
+
+    vocab = index["vocab"]
+    idf = index["idf"]
+    Vt_k = index["Vt_k"]
+
+    # Track which query tokens actually exist in the vocabulary
+    tokens_in_vocab = [t for t in set(tokens) if t in vocab]
+
+    # Build TF-IDF vector for query
+    query_tfidf = np.zeros(len(vocab))
+    term_counts = Counter(tokens)
+    total_terms = len(tokens)
+    for term, count in term_counts.items():
+        if term in vocab:
+            col = vocab[term]
+            query_tfidf[col] = (count / total_terms) * idf[col]
+
+    norm = np.linalg.norm(query_tfidf)
+    if norm > 0:
+        query_tfidf /= norm
+
+    # Project into SVD space
+    q_svd = query_tfidf @ Vt_k.T
+
+    q_norm = np.linalg.norm(q_svd)
+    if q_norm > 0:
+        q_svd /= q_norm
+
+    return q_svd, expanded, matched_labels, tokens_in_vocab
+
+
+def find_matched_keywords(product, query_tokens_in_vocab):
+    """Find which query tokens appear in a product's text fields."""
+    if not query_tokens_in_vocab:
+        return []
+
+    product_text = " ".join([
+        product.name or "",
+        product.brand or "",
+        product.category or "",
+        product.details or "",
+        product.ingredients or "",
+    ]).lower()
+
+    product_token_set = set(re.findall(r"[a-z]+", product_text))
+    matched = [t for t in query_tokens_in_vocab if t in product_token_set]
+    return matched
 
 
 def search_products(
@@ -192,18 +292,36 @@ def search_products(
     min_rating=None,
     top_k=20,
 ):
-    global _tfidf_index
+    global _search_index
 
-    if _tfidf_index is None:
+    # Empty query with no filters = return nothing
+    if not query and not category_filter and min_price is None and max_price is None and min_rating is None:
+        return {"results": [], "query_info": {}}
+
+    if _search_index is None:
         all_products = Product.query.all()
-        _tfidf_index = {
-            "index": build_tfidf_index(all_products),
+        _search_index = {
+            "index": build_search_index(all_products),
             "products": all_products,
         }
 
-    products = _tfidf_index["products"]
-    index = _tfidf_index["index"]
-    query_vector = build_query_vector(query, index["idf"])
+    products = _search_index["products"]
+    index = _search_index["index"]
+
+    query_info = {
+        "original_query": query or "",
+        "expanded_query": "",
+        "expansion_labels": [],
+        "vocab_tokens": [],
+    }
+
+    if query:
+        q_svd, expanded, matched_labels, tokens_in_vocab = build_query_vector_svd(query, index)
+        query_info["expanded_query"] = expanded
+        query_info["expansion_labels"] = matched_labels
+        query_info["vocab_tokens"] = tokens_in_vocab
+    else:
+        q_svd = None
 
     results = []
     for doc_id, product in enumerate(products):
@@ -216,18 +334,33 @@ def search_products(
         if min_rating is not None and (product.rating or 0) < min_rating:
             continue
 
-        score = (
-            cosine_sim(query_vector, index["vectors"][doc_id]) if query_vector else 1.0
-        )
-        results.append((score, product))
+        if q_svd is not None:
+            score = float(np.dot(q_svd, index["doc_vectors_svd"][doc_id]))
+            # Apply strict threshold — skip products with very low relevance
+            if score < SCORE_THRESHOLD:
+                continue
+            matched_kw = find_matched_keywords(product, query_info["vocab_tokens"])
+        else:
+            score = 1.0
+            matched_kw = []
+
+        results.append((score, product, matched_kw))
 
     results.sort(key=lambda x: (-x[0], -(x[1].rating or 0)))
 
-    serialized = [{**p.to_dict(), "score": round(score, 4)} for score, p in results]
+    serialized = [
+        {
+            **p.to_dict(),
+            "score": round(score, 4),
+            "matched_keywords": matched_kw,
+        }
+        for score, p, matched_kw in results
+    ]
 
     if top_k is not None:
-        return serialized[:top_k]
-    return serialized
+        serialized = serialized[:top_k]
+
+    return {"results": serialized, "query_info": query_info}
 
 
 def get_categories():
@@ -238,8 +371,8 @@ def get_categories():
 
 
 def invalidate_index():
-    global _tfidf_index
-    _tfidf_index = None
+    global _search_index
+    _search_index = None
 
 
 def register_routes(app):
@@ -267,35 +400,35 @@ def register_routes(app):
         max_price = request.args.get("max_price", type=float)
         min_rating = request.args.get("min_rating", type=float)
 
-        # code to add multiple pages for options
-
         page = max(request.args.get("page", default=1, type=int), 1)
-        per_page = 20
         per_page = request.args.get("per_page", default=20, type=int)
         per_page = min(max(per_page, 1), 100)
 
-        results = search_products(
+        search_result = search_products(
             query=query,
             category_filter=category,
             min_price=min_price,
             max_price=max_price,
             min_rating=min_rating,
-            top_k=None,  # large number so we can paginate
+            top_k=None,
         )
-        results = results[:50]
+
+        all_results = search_result["results"][:50]
+        query_info = search_result["query_info"]
+
         start = (page - 1) * per_page
         end = start + per_page
-        total = len(results)
-
-        paginated = results[start:end]
+        total = len(all_results)
+        paginated = all_results[start:end]
 
         return jsonify(
             {
                 "results": paginated,
-                "total": len(results),
+                "total": total,
                 "page": page,
                 "per_page": per_page,
                 "total_pages": math.ceil(total / per_page) if per_page else 0,
+                "query_info": query_info,
             }
         )
 
