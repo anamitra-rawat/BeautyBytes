@@ -36,6 +36,12 @@ STOPWORDS = {
     "such", "than", "too", "very", "can", "just", "also", "looking",
     "want", "need", "good", "best", "great", "nice", "like", "get",
     "something", "thing", "things", "look", "make", "event",
+    # Extraneous/boilerplate words
+    "ci", "caviar", "caviiar", "aqua", "water", "extract", "seed", "oil", 
+    "leaf", "fruit", "root", "flower", "acid", "sodium", "potassium", 
+    "glycol", "color", "lake", "red", "blue", "yellow", "iron", "oxides", 
+    "titanium", "dioxide", "mica", "silica", "parfum", "fragrance", "peptides",
+    "hyaluronic", "vitamin", "butter", "cream", "gel", "powder"
 }
 
 # ── Situational query expansion ──────────────────────────────────────────────
@@ -372,6 +378,7 @@ def build_search_index(products):
     # Also keep original tfidf for keyword matching info
     return {
         "vocab": vocab,
+        "idx_to_term": {idx: term for term, idx in vocab.items()},
         "idf": idf,
         "tfidf_matrix": tfidf_matrix,
         "doc_vectors_svd": doc_vectors_svd,
@@ -515,6 +522,35 @@ def compute_keyword_boost(product, query_text):
     return min(boost, 0.6)  # Cap so it doesn't overwhelm everything
 
 
+def get_dimension_words(index, dim_idx, top_n=5):
+    Vt_k = index["Vt_k"]
+    dim_vector = Vt_k[dim_idx]
+    idx_to_term = index.get("idx_to_term", {idx: term for term, idx in index["vocab"].items()})
+    
+    sorted_indices = np.argsort(dim_vector)
+    
+    def extract_top(indices):
+        words = []
+        for i in indices:
+            w = idx_to_term[i]
+            # Skip if it's a substring of an already selected word, or vice versa
+            # to prevent repeats like "lip" and "lipstick"
+            if any(w in existing or existing in w for existing in words):
+                continue
+            words.append(w)
+            if len(words) == top_n:
+                break
+        return words
+        
+    # We slice more than top_n initially so we have backups if some get filtered
+    top_negative_indices = sorted_indices[:top_n*4]
+    top_positive_indices = sorted_indices[-top_n*4:][::-1]
+    
+    neg_words = extract_top(top_negative_indices)
+    pos_words = extract_top(top_positive_indices)
+    return pos_words, neg_words
+
+
 def search_products(
     query,
     category_filter=None,
@@ -554,6 +590,23 @@ def search_products(
         query_info["expanded_query"] = expanded
         query_info["expansion_labels"] = matched_labels
         query_info["vocab_tokens"] = tokens_in_vocab
+        
+        svd_query_themes = []
+        if q_svd is not None and len(q_svd) > 0:
+            top_query_dims = np.argsort(np.abs(q_svd))[-3:][::-1]
+            for dim_idx in top_query_dims:
+                val = q_svd[dim_idx]
+                if abs(val) < 1e-4: continue
+                sign = '+' if val > 0 else '-'
+                pos_words, neg_words = get_dimension_words(index, dim_idx, top_n=5)
+                words = pos_words if val > 0 else neg_words
+                svd_query_themes.append({
+                    "dimension": int(dim_idx),
+                    "sign": sign,
+                    "words": words,
+                    "weight": float(abs(val))
+                })
+        query_info["svd_query_themes"] = svd_query_themes
     else:
         q_svd = None
 
@@ -583,9 +636,27 @@ def search_products(
             if score < SCORE_THRESHOLD:
                 continue
             matched_kw = find_matched_keywords(product, query_info["vocab_tokens"])
+            
+            shared_themes = []
+            doc_svd = index["doc_vectors_svd"][doc_id]
+            contributions = q_svd * doc_svd
+            top_shared_dims = np.argsort(contributions)[-3:][::-1]
+            for dim_idx in top_shared_dims:
+                c_val = contributions[dim_idx]
+                if c_val <= 0.001: continue
+                sign = '+' if doc_svd[dim_idx] > 0 else '-'
+                pos_words, neg_words = get_dimension_words(index, dim_idx, top_n=5)
+                words = pos_words if doc_svd[dim_idx] > 0 else neg_words
+                shared_themes.append({
+                    "dimension": int(dim_idx),
+                    "sign": sign,
+                    "words": words,
+                    "weight": float(c_val)
+                })
         else:
             score = 1.0
             matched_kw = []
+            shared_themes = []
 
         # Apply keyword/category boost for topic relevance
         kw_boost = compute_keyword_boost(product, query) if query else 0.0
@@ -596,7 +667,7 @@ def search_products(
         )
         adjusted_score = min(score + kw_boost + concern_adj, 1.0)
 
-        results.append((adjusted_score, score, product, matched_kw, good_ingredients, bad_ingredients))
+        results.append((adjusted_score, score, product, matched_kw, good_ingredients, bad_ingredients, shared_themes))
 
     results.sort(key=lambda x: (-x[0], -(x[2].rating or 0)))
 
@@ -608,8 +679,9 @@ def search_products(
             "matched_keywords": matched_kw,
             "good_ingredients": good_ing,
             "bad_ingredients": bad_ing,
+            "svd_shared_themes": shared_themes,
         }
-        for adj_score, base_score, p, matched_kw, good_ing, bad_ing in results
+        for adj_score, base_score, p, matched_kw, good_ing, bad_ing, shared_themes in results
     ]
 
     if top_k is not None:

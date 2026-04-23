@@ -87,9 +87,11 @@ def register_chat_route(app, search_products_fn):
         try:
             search_result = search_products_fn(query=search_query, top_k=10)
             products = search_result.get("results", [])
+            query_info = search_result.get("query_info", {})
         except Exception as e:
             logger.error(f"Search error: {e}")
             products = []
+            query_info = {}
 
         if not products:
             return jsonify({
@@ -144,7 +146,8 @@ def register_chat_route(app, search_products_fn):
             "search_results": products,
             "overview": ai_data.get("overview", ""),
             "recommended_product_ids": ai_data.get("recommended_product_ids", []),
-            "product_reasoning": ai_data.get("product_reasoning", {})
+            "product_reasoning": ai_data.get("product_reasoning", {}),
+            "query_info": query_info
         })
 
     @app.route("/api/chat", methods=["POST"])
