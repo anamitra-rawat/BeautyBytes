@@ -66,6 +66,7 @@ def register_chat_route(app, search_products_fn):
         data = request.get_json() or {}
         user_message = (data.get("message") or "").strip()
         filters_text = (data.get("filters") or "").strip()
+        search_mode = (data.get("search_mode") or "svd").strip()
 
         if not user_message and not filters_text:
             return jsonify({"error": "Search criteria required"}), 400
@@ -85,7 +86,7 @@ def register_chat_route(app, search_products_fn):
 
         # 2. Retrieve Products
         try:
-            search_result = search_products_fn(query=search_query, top_k=10)
+            search_result = search_products_fn(query=search_query, top_k=10, search_mode=search_mode)
             products = search_result.get("results", [])
             query_info = search_result.get("query_info", {})
         except Exception as e:

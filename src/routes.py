@@ -428,6 +428,36 @@ def build_query_vector_svd(query_text, index):
     return q_svd, expanded, matched_labels, tokens_in_vocab
 
 
+def build_query_vector_tfidf(query_text, index):
+    """Build a raw TF-IDF query vector (no SVD projection).
+
+    Returns (q_tfidf_vector, expanded_query_string, matched_expansion_labels, query_tokens_in_vocab)
+    """
+    expanded, matched_labels = expand_query(query_text)
+    tokens = tokenize(expanded) if expanded else []
+    if not tokens:
+        return None, query_text, [], []
+
+    vocab = index["vocab"]
+    idf = index["idf"]
+
+    tokens_in_vocab = [t for t in set(tokens) if t in vocab]
+
+    query_tfidf = np.zeros(len(vocab))
+    term_counts = Counter(tokens)
+    total_terms = len(tokens)
+    for term, count in term_counts.items():
+        if term in vocab:
+            col = vocab[term]
+            query_tfidf[col] = (count / total_terms) * idf[col]
+
+    norm = np.linalg.norm(query_tfidf)
+    if norm > 0:
+        query_tfidf /= norm
+
+    return query_tfidf, expanded, matched_labels, tokens_in_vocab
+
+
 def find_matched_keywords(product, query_tokens_in_vocab):
     """Find which query tokens appear in a product's text fields."""
     if not query_tokens_in_vocab:
@@ -559,6 +589,7 @@ def search_products(
     min_rating=None,
     skin_concerns=None,
     top_k=20,
+    search_mode="svd",
 ):
     global _search_index
 
@@ -583,16 +614,23 @@ def search_products(
         "expansion_labels": [],
         "vocab_tokens": [],
         "skin_concerns": skin_concerns or [],
+        "search_mode": search_mode,
     }
 
+    q_svd = None
+    q_tfidf = None
+
     if query:
-        q_svd, expanded, matched_labels, tokens_in_vocab = build_query_vector_svd(query, index)
+        if search_mode == "tfidf":
+            q_tfidf, expanded, matched_labels, tokens_in_vocab = build_query_vector_tfidf(query, index)
+        else:
+            q_svd, expanded, matched_labels, tokens_in_vocab = build_query_vector_svd(query, index)
         query_info["expanded_query"] = expanded
         query_info["expansion_labels"] = matched_labels
         query_info["vocab_tokens"] = tokens_in_vocab
         
         svd_query_themes = []
-        if q_svd is not None and len(q_svd) > 0:
+        if search_mode == "svd" and q_svd is not None and len(q_svd) > 0:
             top_query_dims = np.argsort(np.abs(q_svd))[-3:][::-1]
             for dim_idx in top_query_dims:
                 val = q_svd[dim_idx]
@@ -607,8 +645,6 @@ def search_products(
                     "weight": float(abs(val))
                 })
         query_info["svd_query_themes"] = svd_query_themes
-    else:
-        q_svd = None
 
     # Detect product type from query and hard-filter to matching categories
     detected_types = detect_query_product_types(query) if query else set()
@@ -631,8 +667,8 @@ def search_products(
             continue
 
         if q_svd is not None:
+            # SVD mode: cosine similarity in latent space
             score = float(np.dot(q_svd, index["doc_vectors_svd"][doc_id]))
-            # Apply strict threshold — skip products with very low relevance
             if score < SCORE_THRESHOLD:
                 continue
             matched_kw = find_matched_keywords(product, query_info["vocab_tokens"])
@@ -653,6 +689,14 @@ def search_products(
                     "words": words,
                     "weight": float(c_val)
                 })
+        elif q_tfidf is not None:
+            # TF-IDF mode: cosine similarity in raw term space
+            doc_tfidf = index["tfidf_matrix"][doc_id]
+            score = float(np.dot(q_tfidf, doc_tfidf))
+            if score < SCORE_THRESHOLD:
+                continue
+            matched_kw = find_matched_keywords(product, query_info["vocab_tokens"])
+            shared_themes = []
         else:
             score = 1.0
             matched_kw = []
@@ -728,6 +772,7 @@ def register_routes(app):
         min_rating = request.args.get("min_rating", type=float)
         skin_concerns_raw = request.args.get("skin_concerns", "").strip()
         skin_concerns = [c.strip() for c in skin_concerns_raw.split(",") if c.strip()] or None
+        search_mode = request.args.get("search_mode", "svd").strip()
 
         page = max(request.args.get("page", default=1, type=int), 1)
         per_page = request.args.get("per_page", default=20, type=int)
@@ -741,6 +786,7 @@ def register_routes(app):
             min_rating=min_rating,
             skin_concerns=skin_concerns,
             top_k=None,
+            search_mode=search_mode,
         )
 
         all_results = search_result["results"][:50]
