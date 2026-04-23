@@ -28,3 +28,8 @@ export interface QueryInfo {
 
 export type SortOption = 'relevance' | 'price_asc' | 'price_desc' | 'rating'
 export type ViewMode = 'rows' | 'grid'
+
+export interface CartItem {
+  product: Product
+  quantity: number
+}

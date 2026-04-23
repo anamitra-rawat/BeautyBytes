@@ -21,7 +21,7 @@ from collections import Counter
 import numpy as np
 
 # ── AI toggle ────────────────────────────────────────────────────────────────
-USE_LLM = False
+USE_LLM = True
 # USE_LLM = True
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -153,7 +153,7 @@ SKIN_CONCERNS = {
 }
 
 CONCERN_BOOST_WEIGHT = 0.15    # How much to boost score for good ingredients
-CONCERN_PENALIZE_WEIGHT = 0.10 # How much to reduce score for bad ingredients
+CONCERN_PENALIZE_WEIGHT = 0.15  # Equal to boost so net = (good - bad) × weight
 
 _search_index = None
 
@@ -594,7 +594,7 @@ def search_products(
         concern_adj, good_ingredients, bad_ingredients = compute_concern_adjustment(
             product, skin_concerns
         )
-        adjusted_score = score + kw_boost + concern_adj
+        adjusted_score = min(score + kw_boost + concern_adj, 1.0)
 
         results.append((adjusted_score, score, product, matched_kw, good_ingredients, bad_ingredients))
 

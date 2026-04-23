@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Product, QueryInfo, SortOption, ViewMode } from './types'
+import { Product, QueryInfo, SortOption, ViewMode, CartItem } from './types'
+import Chat from './Chat'
 import './App.css'
 import perfumeIcon from "./assets/perfume.png"
 
@@ -86,16 +87,17 @@ function StarRating({ rating }: { rating: number | null }) {
 /* ── Product Card ───────────────────────────────────────────────────── */
 
 function ProductCard({
-  product, onClick, inCart, overBudget, onAdd, onRemove
+  product, onClick, quantity, overBudget, onAdd, onDecrement
 }: {
   product: Product
   onClick: () => void
-  inCart: boolean
+  quantity: number
   overBudget: boolean
   onAdd: () => void
-  onRemove: () => void
+  onDecrement: () => void
 }) {
   const emoji = CATEGORY_EMOJIS[product.category] || CATEGORY_EMOJIS['default']
+  const inCart = quantity > 0
   const cardClass = `product-card${inCart ? ' in-cart' : ''}${overBudget && !inCart ? ' over-budget' : ''}`
 
   return (
@@ -152,13 +154,21 @@ function ProductCard({
         </div>
       </div>
 
-      <button
-        className={`card-cart-btn ${inCart ? 'remove' : 'add'}${overBudget && !inCart ? ' disabled' : ''}`}
-        onClick={e => { e.stopPropagation(); inCart ? onRemove() : onAdd() }}
-        disabled={overBudget && !inCart}
-      >
-        {inCart ? '− Remove' : '+ Add to Cart'}
-      </button>
+      {inCart ? (
+        <div className="card-quantity-controls" onClick={e => e.stopPropagation()}>
+          <button className="qty-btn decrement" onClick={onDecrement}>−</button>
+          <span className="qty-value">{quantity}</span>
+          <button className={`qty-btn increment${overBudget ? ' disabled' : ''}`} disabled={overBudget} onClick={onAdd}>+</button>
+        </div>
+      ) : (
+        <button
+          className={`card-cart-btn add${overBudget ? ' disabled' : ''}`}
+          onClick={e => { e.stopPropagation(); onAdd() }}
+          disabled={overBudget}
+        >
+          + Add to Cart
+        </button>
+      )}
     </div>
   )
 }
@@ -166,14 +176,14 @@ function ProductCard({
 /* ── Product Modal ──────────────────────────────────────────────────── */
 
 function ProductModal({
-  product, onClose, inCart, overBudget, onAdd, onRemove
+  product, onClose, quantity, overBudget, onAdd, onDecrement
 }: {
   product: Product
   onClose: () => void
-  inCart: boolean
+  quantity: number
   overBudget: boolean
   onAdd: () => void
-  onRemove: () => void
+  onDecrement: () => void
 }) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -182,6 +192,7 @@ function ProductModal({
   }, [onClose])
 
   const emoji = CATEGORY_EMOJIS[product.category] || CATEGORY_EMOJIS['default']
+  const inCart = quantity > 0
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -241,15 +252,26 @@ function ProductModal({
           )}
         </div>
 
-        {/* Modal cart button */}
-        <button
-          className={`modal-cart-btn ${inCart ? 'remove' : 'add'}${overBudget && !inCart ? ' disabled' : ''}`}
-          onClick={() => inCart ? onRemove() : onAdd()}
-          disabled={overBudget && !inCart}
-        >
-          {inCart ? '− Remove from Cart' : '+ Add to Cart'}
-          {!inCart && <span className="modal-cart-price"> · ${product.price.toFixed(2)}</span>}
-        </button>
+        {/* Modal cart button with quantity */}
+        {inCart ? (
+          <div className="modal-quantity-wrapper">
+            <div className="modal-quantity-controls">
+              <button className="qty-btn decrement" onClick={onDecrement}>−</button>
+              <span className="qty-value">{quantity}</span>
+              <button className={`qty-btn increment${overBudget ? ' disabled' : ''}`} disabled={overBudget} onClick={onAdd}>+</button>
+            </div>
+            <div className="modal-cart-price">Total: ${(product.price * quantity).toFixed(2)}</div>
+          </div>
+        ) : (
+          <button
+            className={`modal-cart-btn add${overBudget ? ' disabled' : ''}`}
+            onClick={() => onAdd()}
+            disabled={overBudget}
+          >
+            + Add to Cart
+            <span className="modal-cart-price"> · ${product.price.toFixed(2)}</span>
+          </button>
+        )}
 
         {product.details && (
           <div className="modal-section">
@@ -278,16 +300,16 @@ function ProductModal({
 /* ── Category Row ───────────────────────────────────────────────────── */
 
 function CategoryRow({
-  group, products, cart, budget, cartTotal, onCardClick, onAdd, onRemove
+  group, products, cart, budget, cartTotal, onCardClick, onAdd, onDecrement
 }: {
   group: string
   products: Product[]
-  cart: Product[]
+  cart: CartItem[]
   budget: number
   cartTotal: number
   onCardClick: (p: Product) => void
   onAdd: (p: Product) => void
-  onRemove: (p: Product) => void
+  onDecrement: (p: Product) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -308,17 +330,18 @@ function CategoryRow({
         <button className="scroll-arrow left" onClick={() => scroll('left')} aria-label="Scroll left">‹</button>
         <div className="category-row-track" ref={scrollRef}>
           {products.map(p => {
-            const inCart = cart.some(c => c.id === p.id)
+            const cartItem = cart.find(c => c.product.id === p.id)
+            const quantity = cartItem ? cartItem.quantity : 0
             const wouldExceed = budget > 0 && (cartTotal + p.price) > budget
             return (
               <ProductCard
                 key={p.id}
                 product={p}
                 onClick={() => onCardClick(p)}
-                inCart={inCart}
-                overBudget={wouldExceed && !inCart}
+                quantity={quantity}
+                overBudget={wouldExceed}
                 onAdd={() => onAdd(p)}
-                onRemove={() => onRemove(p)}
+                onDecrement={() => onDecrement(p)}
               />
             )
           })}
@@ -332,16 +355,17 @@ function CategoryRow({
 /* ── Cart Panel ─────────────────────────────────────────────────────── */
 
 function CartPanel({
-  open, cart, budget, onBudgetChange, onRemove, onClose
+  open, cart, budget, onBudgetChange, onAdd, onDecrement, onClose
 }: {
   open: boolean
-  cart: Product[]
+  cart: CartItem[]
   budget: string
   onBudgetChange: (v: string) => void
-  onRemove: (p: Product) => void
+  onAdd: (p: Product) => void
+  onDecrement: (p: Product) => void
   onClose: () => void
 }) {
-  const total = cart.reduce((s, p) => s + p.price, 0)
+  const total = cart.reduce((s, item) => s + (item.product.price * item.quantity), 0)
   const budgetNum = parseFloat(budget) || 0
   const pct = budgetNum > 0 ? Math.min((total / budgetNum) * 100, 100) : 0
   const over = budgetNum > 0 && total > budgetNum
@@ -395,14 +419,20 @@ function CartPanel({
         {cart.length === 0 && (
           <div className="cart-empty">No items yet — add some products!</div>
         )}
-        {cart.map(p => (
-          <div key={p.id} className="cart-item">
+        {cart.map(({product, quantity}) => (
+          <div key={product.id} className="cart-item">
             <div className="cart-item-info">
-              <span className="cart-item-name">{p.name}</span>
-              <span className="cart-item-brand">{p.brand}</span>
+              <span className="cart-item-name">{product.name}</span>
+              <span className="cart-item-brand">{product.brand}</span>
             </div>
-            <span className="cart-item-price">${p.price.toFixed(2)}</span>
-            <button className="cart-item-remove" onClick={() => onRemove(p)}>✕</button>
+            <div className="cart-item-actions">
+              <span className="cart-item-price">${(product.price * quantity).toFixed(2)}</span>
+              <div className="cart-item-qty-controls">
+                <button className="qty-btn decrement" onClick={() => onDecrement(product)}>−</button>
+                <span className="qty-value">{quantity}</span>
+                <button className={`qty-btn increment${over ? ' disabled' : ''}`} disabled={over} onClick={() => onAdd(product)}>+</button>
+              </div>
+            </div>
           </div>
         ))}
       </div>
@@ -436,26 +466,51 @@ export default function App() {
   const [skinConcerns, setSkinConcerns] = useState<string[]>([])
 
   // Cart & budget state
-  const [cart, setCart] = useState<Product[]>([])
+  const [cart, setCart] = useState<CartItem[]>([])
   const [budget, setBudget] = useState('')
   const [cartOpen, setCartOpen] = useState(false)
 
   // View & sort state
   const [viewMode, setViewMode] = useState<ViewMode>('rows')
+
+  // Chat / RAG state
+  const [chatOpen, setChatOpen] = useState(false)
+  const [useLlm, setUseLlm] = useState(false)
+  const [ragQuery, setRagQuery] = useState('')
   const [sortBy, setSortBy] = useState<SortOption>('relevance')
 
   const budgetNum = parseFloat(budget) || 0
-  const cartTotal = cart.reduce((s, p) => s + p.price, 0)
+  const cartTotal = cart.reduce((s, item) => s + (item.product.price * item.quantity), 0)
+  const cartCount = cart.reduce((s, item) => s + item.quantity, 0)
 
   // Cart helpers
   const addToCart = (p: Product) => {
-    if (cart.some(c => c.id === p.id)) return
     if (budgetNum > 0 && cartTotal + p.price > budgetNum) return
-    setCart(prev => [...prev, p])
+    setCart(prev => {
+      const existing = prev.find(item => item.product.id === p.id)
+      if (existing) {
+        return prev.map(item => item.product.id === p.id ? { ...item, quantity: item.quantity + 1 } : item)
+      } else {
+        return [...prev, { product: p, quantity: 1 }]
+      }
+    })
   }
-  const removeFromCart = (p: Product) => setCart(prev => prev.filter(c => c.id !== p.id))
-  const isInCart = (p: Product) => cart.some(c => c.id === p.id)
-  const isOverBudget = (p: Product) => budgetNum > 0 && !isInCart(p) && (cartTotal + p.price) > budgetNum
+  const decrementFromCart = (p: Product) => {
+    setCart(prev => {
+      const existing = prev.find(item => item.product.id === p.id)
+      if (!existing) return prev
+      if (existing.quantity > 1) {
+        return prev.map(item => item.product.id === p.id ? { ...item, quantity: item.quantity - 1 } : item)
+      } else {
+        return prev.filter(item => item.product.id !== p.id)
+      }
+    })
+  }
+
+  const getQuantity = (p: Product) => {
+    const item = cart.find(c => c.product.id === p.id)
+    return item ? item.quantity : 0
+  }
 
   const toggleConcern = (key: string) => {
     setSkinConcerns(prev => prev.includes(key) ? prev.filter(c => c !== key) : [...prev, key])
@@ -464,6 +519,7 @@ export default function App() {
 
   useEffect(() => {
     fetch('/api/categories').then(r => r.json()).then(setCategories).catch(() => {})
+    fetch('/api/config').then(r => r.json()).then(cfg => setUseLlm(!!cfg.use_llm)).catch(() => {})
   }, [])
 
   const hasAnyInput = query || category || minPrice || maxPrice || minRating || skinConcerns.length > 0
@@ -498,7 +554,17 @@ export default function App() {
   const clearAll = () => {
     setQuery(''); setCategory(''); setMinPrice(''); setMaxPrice(''); setMinRating('')
     setPage(1); setTotal(0); setResults([]); setSearched(false); setQueryInfo(null); setSkinConcerns([])
+    setRagQuery('')
   }
+
+  // RAG: when the chat returns search results, display them in the main results area
+  const handleRagResults = useCallback((ragProducts: Product[], searchQuery: string) => {
+    setResults(ragProducts)
+    setTotal(ragProducts.length)
+    setSearched(true)
+    setRagQuery(searchQuery)
+    setQueryInfo(null)
+  }, [])
 
   // Sorted results
   const sortedResults = useMemo(() => {
@@ -545,13 +611,21 @@ export default function App() {
               <span className="logo-icon">🌸</span>
               <span className="logo-text">BeautyBytes</span>
             </div>
+            {useLlm && (
+              <button
+                className={`header-chat-btn ${chatOpen ? 'active' : ''}`}
+                onClick={() => setChatOpen(o => !o)}
+              >
+                💬 Ask AI
+              </button>
+            )}
             <button
               className="header-cart-btn"
               onClick={() => setCartOpen(o => !o)}
             >
               🛒
-              {cart.length > 0 && <span className="cart-count-badge">{cart.length}</span>}
-              {budgetNum > 0 && cart.length === 0 && <span className="header-budget-tag">${budgetNum}</span>}
+              {cartCount > 0 && <span className="cart-count-badge">{cartCount}</span>}
+              {budgetNum > 0 && cartCount === 0 && <span className="header-budget-tag">${budgetNum}</span>}
             </button>
           </div>
           <p className="tagline">Search Sephora products</p>
@@ -646,6 +720,17 @@ export default function App() {
           </div>
         )}
 
+        {/* RAG query banner */}
+        {!loading && searched && ragQuery && (
+          <div className="expansion-banner rag-banner">
+            <span className="expansion-icon">🤖</span>
+            <span>
+              AI searched for: <strong className="expansion-label">"{ragQuery}"</strong>
+              {' '}— showing retrieved products below
+            </span>
+          </div>
+        )}
+
         {/* Expansion banner */}
         {!loading && searched && queryInfo && queryInfo.expansion_labels && queryInfo.expansion_labels.length > 0 && (
           <div className="expansion-banner">
@@ -695,7 +780,7 @@ export default function App() {
                 onClick={() => setCartOpen(o => !o)}
               >
                 🛒
-                {cart.length > 0 && <span className="cart-count-badge">{cart.length}</span>}
+                {cartCount > 0 && <span className="cart-count-badge">{cartCount}</span>}
               </button>
             </div>
           </div>
@@ -714,7 +799,7 @@ export default function App() {
                 cartTotal={cartTotal}
                 onCardClick={setSelected}
                 onAdd={addToCart}
-                onRemove={removeFromCart}
+                onDecrement={decrementFromCart}
               />
             ))}
           </div>
@@ -723,17 +808,21 @@ export default function App() {
         {/* ── Results: Grid view ────────────────────────────────────── */}
         {!loading && sortedResults.length > 0 && viewMode === 'grid' && (
           <div className="product-grid">
-            {sortedResults.map(p => (
-              <ProductCard
-                key={p.id}
-                product={p}
-                onClick={() => setSelected(p)}
-                inCart={isInCart(p)}
-                overBudget={isOverBudget(p)}
-                onAdd={() => addToCart(p)}
-                onRemove={() => removeFromCart(p)}
-              />
-            ))}
+            {sortedResults.map(p => {
+              const quantity = getQuantity(p)
+              const wouldExceed = budgetNum > 0 && (cartTotal + p.price) > budgetNum
+              return (
+                <ProductCard
+                  key={p.id}
+                  product={p}
+                  onClick={() => setSelected(p)}
+                  quantity={quantity}
+                  overBudget={wouldExceed}
+                  onAdd={() => addToCart(p)}
+                  onDecrement={() => decrementFromCart(p)}
+                />
+              )
+            })}
           </div>
         )}
 
@@ -757,13 +846,26 @@ export default function App() {
         )}
       </main>
 
+      {/* ── Chat panel (RAG) ───────────────────────────────────────── */}
+      {useLlm && (
+        <div className={`chat-panel${chatOpen ? ' open' : ''}`}>
+          <div className="chat-panel-header">
+            <h3>💬 AI Assistant</h3>
+            <button className="chat-panel-close" onClick={() => setChatOpen(false)}>✕</button>
+          </div>
+          <Chat onSearchResults={handleRagResults} />
+        </div>
+      )}
+      {chatOpen && <div className="chat-backdrop" onClick={() => setChatOpen(false)} />}
+
       {/* ── Cart panel ────────────────────────────────────────────── */}
       <CartPanel
         open={cartOpen}
         cart={cart}
         budget={budget}
         onBudgetChange={setBudget}
-        onRemove={removeFromCart}
+        onAdd={addToCart}
+        onDecrement={decrementFromCart}
         onClose={() => setCartOpen(false)}
       />
 
@@ -775,10 +877,10 @@ export default function App() {
         <ProductModal
           product={selected}
           onClose={() => setSelected(null)}
-          inCart={isInCart(selected)}
-          overBudget={isOverBudget(selected)}
+          quantity={getQuantity(selected)}
+          overBudget={budgetNum > 0 && (cartTotal + selected.price) > budgetNum}
           onAdd={() => addToCart(selected)}
-          onRemove={() => removeFromCart(selected)}
+          onDecrement={() => decrementFromCart(selected)}
         />
       )}
     </div>
