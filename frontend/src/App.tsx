@@ -5,6 +5,7 @@ import { Product, AIOverview, CartItem } from './types'
 import StartPage from './components/StartPage'
 import SearchBar from './components/SearchBar'
 import AIOverviewCard from './components/AIOverviewCard'
+import SVDAnalysisCard from './components/SVDAnalysisCard'
 import ProductGrid from './components/ProductGrid'
 import ProductCard from './components/ProductCard'
 import FollowUpPanel from './components/FollowUpPanel'
@@ -180,6 +181,7 @@ export default function App() {
   
   const [showFilters, setShowFilters] = useState(false)
   const [useLlm, setUseLlm] = useState(false)
+  const [searchMode, setSearchMode] = useState<'svd' | 'tfidf'>('svd')
 
   // Cart & budget state
   const [cart, setCart] = useState<CartItem[]>([])
@@ -215,10 +217,10 @@ export default function App() {
 
     try {
       if (useLlm) {
-        const response = await fetch('/api/search_ai', {
+         const response = await fetch('/api/search_ai', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: query, filters: filtersText })
+          body: JSON.stringify({ message: query, filters: filtersText, search_mode: searchMode })
         })
         const data = await response.json()
         
@@ -233,7 +235,8 @@ export default function App() {
         setAiOverview({
           search_query: data.search_query,
           overview: data.overview,
-          recommended_product_ids: data.recommended_product_ids
+          recommended_product_ids: data.recommended_product_ids,
+          svd_query_themes: data.query_info?.svd_query_themes
         })
 
       } else {
@@ -245,6 +248,7 @@ export default function App() {
         if (maxPrice) qParams.set('max_price', maxPrice)
         if (minRating) qParams.set('min_rating', minRating)
         skinConcerns.forEach(c => qParams.append('concerns', c))
+        qParams.set('search_mode', searchMode)
 
         const res = await fetch(`/api/search?${qParams.toString()}`)
         const data = await res.json()
@@ -255,7 +259,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [query, category, minPrice, maxPrice, minRating, skinConcerns, hasAnyInput, useLlm])
+  }, [query, category, minPrice, maxPrice, minRating, skinConcerns, hasAnyInput, useLlm, searchMode])
 
   const clearAll = () => {
     setQuery(''); setCategory(''); setMinPrice(''); setMaxPrice(''); setMinRating(''); setSkinConcerns([])
@@ -309,7 +313,7 @@ export default function App() {
             </div>
             
             {searched && useLlm && results.length > 0 && (
-              <button className={`header-chat-btn ${chatOpen ? 'active' : ''}`} onClick={() => setChatOpen(o => !o)}>
+              <button className={`header-chat-btn pulse-animation ${chatOpen ? 'active' : ''}`} onClick={() => setChatOpen(o => !o)}>
                 💬 Ask Follow-Up
               </button>
             )}
@@ -336,6 +340,7 @@ export default function App() {
           clearAll={clearAll}
           showFilters={showFilters} setShowFilters={setShowFilters}
           hasAnyInput={hasAnyInput}
+          searchMode={searchMode} setSearchMode={setSearchMode}
         />
 
         {loading && (
@@ -346,40 +351,57 @@ export default function App() {
         )}
 
         {!loading && searched && (
-          <>
-            <AIOverviewCard data={aiOverview} />
+          <div className="results-layout">
+            <div className="results-main">
+              <AIOverviewCard data={aiOverview} />
+              
+              {results.length > 0 ? (
+                 <>
+                   {aiOverview && aiOverview.recommended_product_ids?.length > 0 && (
+                     <div style={{ marginBottom: '16px', fontSize: '0.85rem', color: '#16a34a', fontWeight: 600 }}>
+                       <span style={{ marginRight: '6px' }}>✨</span> Legend: Items glowing green are the top AI recommendations.
+                     </div>
+                   )}
+                   <ProductGrid>
+                     {results.map(p => {
+                       const quantity = getQuantity(p)
+                       const wouldExceed = budgetNum > 0 && (cartTotal + p.price) > budgetNum
+                       return (
+                         <ProductCard
+                           key={p.id}
+                           product={p}
+                           onClick={() => setSelected(p)}
+                           quantity={quantity}
+                           overBudget={wouldExceed}
+                           onAdd={() => addToCart(p)}
+                           onDecrement={() => decrementFromCart(p)}
+                         />
+                       )
+                     })}
+                   </ProductGrid>
+                 </>
+              ) : (
+                 <div style={{textAlign: 'center', marginTop: '40px', color: 'var(--text-muted)'}}>
+                   <p>No products found for this search.</p>
+                 </div>
+              )}
+            </div>
             
-            {results.length > 0 ? (
-               <>
-                 {aiOverview && aiOverview.recommended_product_ids?.length > 0 && (
-                   <div style={{ marginBottom: '16px', fontSize: '0.85rem', color: '#16a34a', fontWeight: 600 }}>
-                     <span style={{ marginRight: '6px' }}>✨</span> Legend: Items glowing green are the top AI recommendations.
-                   </div>
-                 )}
-                 <ProductGrid>
-                   {results.map(p => {
-                     const quantity = getQuantity(p)
-                     const wouldExceed = budgetNum > 0 && (cartTotal + p.price) > budgetNum
-                     return (
-                       <ProductCard
-                         key={p.id}
-                         product={p}
-                         onClick={() => setSelected(p)}
-                         quantity={quantity}
-                         overBudget={wouldExceed}
-                         onAdd={() => addToCart(p)}
-                         onDecrement={() => decrementFromCart(p)}
-                       />
-                     )
-                   })}
-                 </ProductGrid>
-               </>
-            ) : (
-               <div style={{textAlign: 'center', marginTop: '40px', color: 'var(--text-muted)'}}>
-                 <p>No products found for this search.</p>
-               </div>
-            )}
-          </>
+            <div className="results-sidebar">
+              {searchMode === 'svd' && <SVDAnalysisCard data={aiOverview} />}
+              {searchMode === 'tfidf' && (
+                <div className="ai-overview-card" style={{ height: 'fit-content' }}>
+                  <div className="ai-overview-header" style={{ marginBottom: '12px' }}>
+                    <span className="ai-icon">📄</span>
+                    <h3 className="ai-title">TF-IDF Search</h3>
+                  </div>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+                    Results are ranked by raw TF-IDF cosine similarity — exact keyword matching without latent semantic analysis.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </main>
 

@@ -1,4 +1,5 @@
 import { Product } from '../types'
+import { getDimensionColor } from '../themeUtils'
 
 const CATEGORY_EMOJIS: Record<string, string> = {
   Foundation: '💄',
@@ -65,6 +66,32 @@ export default function ProductCard({
           <div className="ai-reasoning-section">
             <div className="ai-reasoning-label">✨ Why this was recommended</div>
             <div className="ai-reasoning-text">{product.ai_reasoning}</div>
+          </div>
+        )}
+
+        {product.svd_shared_themes && product.svd_shared_themes.length > 0 && (
+          <div className="ai-reasoning-section" style={{ marginTop: '12px', background: 'transparent' }}>
+            <div className="ai-reasoning-label" style={{ color: 'var(--text-muted)' }}>Why this match? (shared latent dimensions)</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+              {product.svd_shared_themes.map((theme) => {
+                const color = getDimensionColor(theme.dimension);
+                return (
+                  <div key={theme.dimension} title={theme.words.join(', ')} style={{
+                    backgroundColor: `${color}15`, 
+                    color: color, 
+                    border: `1px solid ${color}30`,
+                    padding: '2px 6px', 
+                    borderRadius: '10px', 
+                    fontSize: '0.7rem', 
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    cursor: 'help'
+                  }}>
+                    {theme.sign === '+' ? '＋' : '－'} Dim {theme.dimension} ({theme.words.slice(0, 2).join(', ')})
+                  </div>
+                )
+              })}
+            </div>
           </div>
         )}
 

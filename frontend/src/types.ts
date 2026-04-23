@@ -1,3 +1,10 @@
+export interface SVDTheme {
+  dimension: number
+  sign: '+' | '-'
+  words: string[]
+  weight: number
+}
+
 export interface Product {
   id: number
   name: string
@@ -18,12 +25,14 @@ export interface Product {
   bad_ingredients?: string[]
   ai_reasoning?: string
   is_top_recommendation?: boolean
+  svd_shared_themes?: SVDTheme[]
 }
 
 export interface AIOverview {
   search_query: string
   overview: string
   recommended_product_ids: number[]
+  svd_query_themes?: SVDTheme[]
 }
 
 export interface QueryInfo {
@@ -32,6 +41,7 @@ export interface QueryInfo {
   expansion_labels: string[]
   vocab_tokens: string[]
   skin_concerns: string[]
+  svd_query_themes?: SVDTheme[]
 }
 
 export type SortOption = 'relevance' | 'price_asc' | 'price_desc' | 'rating'

@@ -38,7 +38,9 @@ export default function SearchBar({
   clearAll,
   showFilters,
   setShowFilters,
-  hasAnyInput
+  hasAnyInput,
+  searchMode,
+  setSearchMode,
 }: {
   query: string
   setQuery: (q: string) => void
@@ -59,6 +61,8 @@ export default function SearchBar({
   showFilters: boolean
   setShowFilters: (s: boolean | ((prev: boolean) => boolean)) => void
   hasAnyInput: boolean
+  searchMode: 'svd' | 'tfidf'
+  setSearchMode: (m: 'svd' | 'tfidf') => void
 }) {
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') onSearch()
@@ -88,6 +92,25 @@ export default function SearchBar({
         >
           {loading ? 'Searching...' : 'Search'}
         </button>
+      </div>
+
+      {/* Search Mode Toggle */}
+      <div className="search-mode-toggle">
+        <span className="search-mode-label">Search Engine:</span>
+        <div className="mode-switch">
+          <button
+            className={`mode-btn ${searchMode === 'svd' ? 'active' : ''}`}
+            onClick={() => setSearchMode('svd')}
+          >
+            🧠 SVD (Semantic)
+          </button>
+          <button
+            className={`mode-btn ${searchMode === 'tfidf' ? 'active' : ''}`}
+            onClick={() => setSearchMode('tfidf')}
+          >
+            📝 TF-IDF (Keyword)
+          </button>
+        </div>
       </div>
 
       <div className="quick-searches">
