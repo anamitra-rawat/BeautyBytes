@@ -21,142 +21,154 @@ from infosci_spark_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
-
-def transform_query_for_search(client, user_message):
-    """Use the LLM to transform the user's natural language question into an
-    optimized search query for our product IR system.
-
-    This is the 'query modification' step from the RAG demo — the LLM rewrites
-    the user's conversational question into keywords that will retrieve the most
-    relevant products from the TF-IDF + SVD search index.
-
-    Args:
-        client: LLMClient instance.
-        user_message: The user's original chat message.
-
-    Returns:
-        str: An optimized search query string for the IR system.
-    """
+def transform_query_for_search(client, user_message, filters_text=""):
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a search query optimizer for a beauty product catalog (Sephora products). "
-                "Your job is to transform the user's question into the best possible search query "
-                "for a TF-IDF based product search engine.\n\n"
+                "You are a search query optimizer for a BeautyBytes product catalog. "
+                "Transform the user's input into the best possible search query for an IR engine.\n"
                 "Rules:\n"
-                "- Output ONLY the search query, nothing else\n"
-                "- Include relevant product type keywords (e.g. moisturizer, serum, lipstick)\n"
-                "- Include relevant ingredient or attribute keywords\n"
-                "- Include skin concern keywords if mentioned\n"
-                "- Keep it concise — 3 to 10 words\n"
-                "- Do NOT include explanations, quotes, or extra text\n\n"
-                "Examples:\n"
-                "User: 'What's the best thing for wrinkles?'\n"
-                "Query: anti-aging serum retinol wrinkle cream\n\n"
-                "User: 'I have oily skin and need something for my pores'\n"
-                "Query: oily skin pore minimizing cleanser mattifying\n\n"
-                "User: 'recommend a red lipstick for a fancy event'\n"
-                "Query: red lipstick long-wear bold pigment"
+                "- Output ONLY the search query, nothing else (3-10 words)\n"
+                "- Incorporate specific product types, ingredients, and active filters.\n"
+                "- Do NOT include explanations."
             ),
         },
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": f"User Input: {user_message}\nActive Filters: {filters_text}"},
     ]
     response = client.chat(messages, stream=False, show_thinking=False)
     query = (response.get("content") or "").strip()
-    logger.info(f"LLM transformed query: '{user_message}' -> '{query}'")
     return query
 
-
 def format_product_context(products):
-    """Format retrieved products as a rich Markdown context string for the LLM.
-
-    Similar to format_rag_context in the class demo, but adapted for products.
-
-    Args:
-        products: List of product dicts from search_products().
-
-    Returns:
-        str: Formatted context string with product details.
-    """
     if not products:
-        return "No matching products found in the catalog."
-
+        return "No matching products found."
     parts = []
     for i, p in enumerate(products, 1):
+        pid = p.get('id', i)
         section = (
-            f"### [{i}] {p['name']}\n"
-            f"- **Brand:** {p['brand']}\n"
-            f"- **Category:** {p['category']}\n"
-            f"- **Price:** ${p['price']:.2f}\n"
-            f"- **Rating:** {p.get('rating') or 'N/A'}"
+            f"### ID: {pid} | {p['name']} ({p['brand']})\n"
+            f"- Price: ${p['price']:.2f} | Rating: {p.get('rating', 'N/A')}\n"
         )
-        if p.get('num_reviews'):
-            section += f" ({p['num_reviews']} reviews)"
-        section += "\n"
-        if p.get('details'):
-            section += f"- **Details:** {p['details']}\n"
-        if p.get('ingredients'):
-            section += f"- **Key Ingredients:** {p['ingredients']}\n"
-        if p.get('score') is not None:
-            section += f"- **Relevance Score:** {p['score']:.4f}\n"
+        if p.get('details'): section += f"- Details: {p['details']}\n"
+        if p.get('ingredients'): section += f"- Ingredients: {p['ingredients'][:200]}...\n"
         parts.append(section)
-
-    return "\n---\n\n".join(parts)
-
+    return "\n".join(parts)
 
 def register_chat_route(app, search_products_fn):
-    """Register the /api/chat SSE endpoint with full RAG pipeline.
 
-    Args:
-        app: Flask app instance.
-        search_products_fn: The search_products function from routes.py (our IR system).
-    """
+    @app.route("/api/search_ai", methods=["POST"])
+    def search_ai():
+        # Unified AI Search Route
+        # Takes search query and filters, retrieves products, and asks the LLM
+        # to build an overview and provide per-product reasoning.
+        # Returns a structured JSON payload synchronously (no streaming).
+        data = request.get_json() or {}
+        user_message = (data.get("message") or "").strip()
+        filters_text = (data.get("filters") or "").strip()
+
+        if not user_message and not filters_text:
+            return jsonify({"error": "Search criteria required"}), 400
+
+        api_key = os.getenv("API_KEY")
+        if not api_key:
+            return jsonify({"error": "API_KEY not set"}), 500
+
+        client = LLMClient(api_key=api_key)
+
+        # 1. Transform query
+        try:
+            search_query = transform_query_for_search(client, user_message, filters_text)
+        except Exception as e:
+            logger.error(f"Query transform error: {e}")
+            search_query = user_message
+
+        # 2. Retrieve Products
+        try:
+            search_result = search_products_fn(query=search_query, top_k=10)
+            products = search_result.get("results", [])
+        except Exception as e:
+            logger.error(f"Search error: {e}")
+            products = []
+
+        if not products:
+            return jsonify({
+                "search_query": search_query,
+                "search_results": [],
+                "overview": "I couldn't find any products matching those criteria.",
+                "recommended_product_ids": [],
+                "product_reasoning": {}
+            })
+
+        # 3. Generate Overview and Reasoning
+        context_text = format_product_context(products)
+        prompt = [
+            {
+                "role": "system",
+                "content": (
+                    "You are the BeautyBytes AI assistant. Analyze the retrieved products against the user's intent. "
+                    "You MUST respond ONLY with a perfectly formatted JSON object. "
+                    "The JSON object must have exactly these keys:\n"
+                    "1. \"overview\": A short, helpful paragraph summarizing your findings.\n"
+                    "2. \"recommended_product_ids\": A JSON array of the top 3 product IDs that best match.\n"
+                    "3. \"product_reasoning\": A JSON object mapping EACH provided product ID to a short 1-sentence explanation of why it was retrieved/recommended.\n\n"
+                    "Do NOT include markdown formatting like ```json ... ```. Just return the raw JSON text."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"User intent: {user_message} (Filters: {filters_text})\n\nRetrieved Products:\n{context_text}"
+            }
+        ]
+
+        try:
+            response = client.chat(prompt, stream=False, show_thinking=False)
+            content = (response.get("content") or "").strip()
+            # Clean up potential markdown blocking
+            if content.startswith("```json"): content = content[7:]
+            if content.startswith("```"): content = content[3:]
+            if content.endswith("```"): content = content[:-3]
+            
+            ai_data = json.loads(content.strip())
+        except Exception as e:
+            logger.error(f"JSON Generation error: {e}. Raw content: {response.get('content') if 'response' in locals() else 'None'}")
+            # Fallback
+            ai_data = {
+                "overview": "Here are the top products I found based on your search.",
+                "recommended_product_ids": [p['id'] for p in products[:3]],
+                "product_reasoning": {p['id']: "Matched based on keywords." for p in products}
+            }
+
+        return jsonify({
+            "search_query": search_query,
+            "search_results": products,
+            "overview": ai_data.get("overview", ""),
+            "recommended_product_ids": ai_data.get("recommended_product_ids", []),
+            "product_reasoning": ai_data.get("product_reasoning", {})
+        })
 
     @app.route("/api/chat", methods=["POST"])
     def chat():
+        # Follow-up Chat Route.
+        # Streaming, context-aware Q&A based on the currently displayed search results.
         data = request.get_json() or {}
         user_message = (data.get("message") or "").strip()
+        current_context = data.get("current_context", "No context provided.")
+
         if not user_message:
             return jsonify({"error": "Message is required"}), 400
 
         api_key = os.getenv("API_KEY")
         if not api_key:
-            return jsonify({"error": "API_KEY not set — add it to your .env file"}), 500
+            return jsonify({"error": "API_KEY not set"}), 500
 
         client = LLMClient(api_key=api_key)
 
         def generate():
-            # Step 1: LLM transforms user question into a search query
-            try:
-                search_query = transform_query_for_search(client, user_message)
-            except Exception as e:
-                logger.error(f"Query transformation error: {e}")
-                search_query = user_message  # Fallback: use original message
-
-            # Send the generated search query to the frontend
-            yield f"data: {json.dumps({'search_query': search_query})}\n\n"
-
-            # Step 2: IR system retrieves products
-            try:
-                search_result = search_products_fn(query=search_query, top_k=8)
-                products = search_result.get("results", [])
-            except Exception as e:
-                logger.error(f"Search error: {e}")
-                products = []
-
-            # Send the full IR results to the frontend (so they display as cards)
-            yield f"data: {json.dumps({'search_results': products})}\n\n"
-
-            # Step 3: Format products as context for the LLM
-            context_text = format_product_context(products)
-
-            # Step 4: RAG generation, LLM answers using retrieved products
             rag_system = (
-                "You are a helpful BeautyBytes beauty assistant. "
-                "Answer the user's question using ONLY the product information provided below. "
-                "If the products don't contain enough information to answer, say so. "
-                "When recommending products, mention them by name, brand, and price. "
+                "You are a helpful BeautyBytes follow-up assistant. "
+                "The user is looking at a specific set of products. Answer their question "
+                "referencing ONLY the provided product context. "
                 "Be concise, friendly, and helpful."
             )
 
@@ -165,9 +177,10 @@ def register_chat_route(app, search_products_fn):
                 {
                     "role": "user",
                     "content": (
-                        f"Retrieved products from our catalog:\n\n{context_text}\n\n"
+                        f"Currently Displayed Context (Search Results):\n"
+                        f"{current_context}\n\n"
                         f"---\n\n"
-                        f"User question: {user_message}"
+                        f"User's Follow-Up Question: {user_message}"
                     ),
                 },
             ]
@@ -178,7 +191,7 @@ def register_chat_route(app, search_products_fn):
                         yield f"data: {json.dumps({'content': chunk['content']})}\n\n"
             except Exception as e:
                 logger.error(f"LLM streaming error: {e}")
-                yield f"data: {json.dumps({'error': 'LLM streaming error occurred'})}\n\n"
+                yield f"data: {json.dumps({'error': 'LLM streaming error'})}\n\n"
 
         return Response(
             stream_with_context(generate()),

@@ -16,6 +16,14 @@ export interface Product {
   matched_keywords?: string[]
   good_ingredients?: string[]
   bad_ingredients?: string[]
+  ai_reasoning?: string
+  is_top_recommendation?: boolean
+}
+
+export interface AIOverview {
+  search_query: string
+  overview: string
+  recommended_product_ids: number[]
 }
 
 export interface QueryInfo {
