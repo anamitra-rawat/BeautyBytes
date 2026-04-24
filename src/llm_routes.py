@@ -162,9 +162,9 @@ def register_chat_route(app, search_products_fn):
         if not user_message:
             return jsonify({"error": "Message is required"}), 400
 
-        api_key = os.getenv("API_KEY")
+        api_key = os.getenv("SPARK_API_KEY")
         if not api_key:
-            return jsonify({"error": "API_KEY not set"}), 500
+            return jsonify({"error": "SPARK_API_KEY not set"}), 500
 
         client = LLMClient(api_key=api_key)
 
