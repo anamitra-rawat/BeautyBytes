@@ -24,6 +24,7 @@ COPY requirements.txt $CONTAINER_HOME/requirements.txt
 RUN pip install --no-cache-dir -r $CONTAINER_HOME/requirements.txt
 
 COPY src/ $CONTAINER_HOME/src/
+COPY .env.example $CONTAINER_HOME/src/.env
 
 COPY --from=frontend-build /app/frontend/dist $CONTAINER_HOME/frontend/dist
 

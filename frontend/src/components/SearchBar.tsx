@@ -1,12 +1,15 @@
-import { KeyboardEvent } from 'react'
+import { KeyboardEvent, useState, useEffect, useRef } from 'react'
+import { soundEngine } from '../soundEffects'
 
-const QUICK_SEARCHES = [
+const TYPING_SUGGESTIONS = [
   'lipstick for a red carpet event',
   'eyeshadow for a glam look',
   'moisturizer for dry skin',
   'perfume for a date night',
   'foundation for oily skin',
   'anti-aging serum',
+  'glass skin routine',
+  'bold lip for a party',
 ]
 
 const SKIN_CONCERN_OPTIONS = [
@@ -65,8 +68,58 @@ export default function SearchBar({
   setSearchMode: (m: 'svd' | 'tfidf') => void
 }) {
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') onSearch()
+    if (e.key === 'Enter' && hasAnyInput && !loading) {
+      soundEngine.playSparkle()
+      onSearch()
+    }
   }
+
+  // Auto-typing placeholder effect
+  const [placeholder, setPlaceholder] = useState('')
+  const suggestionIdx = useRef(0)
+  const charIdx = useRef(0)
+  const isDeleting = useRef(false)
+  const pauseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    // Don't animate if user has typed something
+    if (query) return
+
+    const tick = () => {
+      const current = TYPING_SUGGESTIONS[suggestionIdx.current]
+
+      if (!isDeleting.current) {
+        charIdx.current++
+        setPlaceholder(current.slice(0, charIdx.current))
+
+        if (charIdx.current === current.length) {
+          // Pause at full text before deleting
+          pauseTimer.current = setTimeout(() => {
+            isDeleting.current = true
+            tick()
+          }, 2000)
+          return
+        }
+      } else {
+        charIdx.current--
+        setPlaceholder(current.slice(0, charIdx.current))
+
+        if (charIdx.current === 0) {
+          isDeleting.current = false
+          suggestionIdx.current = (suggestionIdx.current + 1) % TYPING_SUGGESTIONS.length
+          // Small pause before next word
+          pauseTimer.current = setTimeout(tick, 400)
+          return
+        }
+      }
+
+      const speed = isDeleting.current ? 30 : 60 + Math.random() * 40
+      pauseTimer.current = setTimeout(tick, speed)
+    }
+
+    pauseTimer.current = setTimeout(tick, 600)
+    return () => { if (pauseTimer.current) clearTimeout(pauseTimer.current) }
+  }, [query])
 
   return (
     <div className="search-box">
@@ -76,9 +129,12 @@ export default function SearchBar({
           <input
             className="search-input"
             type="text"
-            placeholder="Try: 'lipstick for a red carpet event' or 'moisturizer for dry skin'"
+            placeholder={query ? '' : `Try: ${placeholder}▏`}
             value={query}
-            onChange={e => setQuery(e.target.value)}
+            onChange={e => {
+              setQuery(e.target.value);
+              soundEngine.playType();
+            }}
             onKeyDown={handleKeyDown}
           />
           {query && (
@@ -87,7 +143,10 @@ export default function SearchBar({
         </div>
         <button
           className="search-btn"
-          onClick={onSearch}
+          onClick={() => {
+            soundEngine.playSparkle()
+            onSearch()
+          }}
           disabled={loading || !hasAnyInput}
         >
           {loading ? 'Searching...' : 'Search'}
@@ -114,16 +173,6 @@ export default function SearchBar({
       </div>
 
       <div className="quick-searches">
-        <span className="quick-label">Try:</span>
-        {QUICK_SEARCHES.map(qs => (
-          <button
-            key={qs}
-            className="quick-chip"
-            onClick={() => { setQuery(qs); /* Will let user hit Search manually */ }}
-          >
-            {qs}
-          </button>
-        ))}
         <button className={`filter-toggle ${showFilters ? 'active' : ''}`} onClick={() => setShowFilters(s => !s)}>
           {showFilters ? 'Hide Filters ▲' : '⚙ Filters ▼'}
         </button>

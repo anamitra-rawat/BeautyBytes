@@ -57,6 +57,107 @@ def format_product_context(products):
 
 def register_chat_route(app, search_products_fn):
 
+    @app.route("/api/clarifying_questions", methods=["POST"])
+    def clarifying_questions():
+        data = request.get_json() or {}
+        query = (data.get("query") or "").strip()
+
+        if not query:
+            return jsonify({"questions": []})
+
+        api_key = os.getenv("SPARK_API_KEY")
+        if not api_key:
+            return jsonify({"error": "SPARK_API_KEY not set"}), 500
+
+        client = LLMClient(api_key=api_key)
+        
+        prompt = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert beauty consultant. Analyze the user's search query, which may describe specific situations (e.g., 'a week long vacation in Florida'). "
+                    "Determine if you need more information to make a perfect recommendation. "
+                    "If the query is already very specific and clear, return an empty array for questions.\n"
+                    "If it is vague or situational, ask 1 to 3 clarifying questions. These questions MUST focus ONLY on specific product features (e.g., matte vs dewy finish, fragrance-free, SPF level, texture, coverage level). Do not ask general routine questions.\n"
+                    "Each question must have exactly 2-4 predefined options for the user to choose from.\n"
+                    "You MUST respond ONLY with a perfectly formatted JSON object with a single key 'questions'. Example:\n"
+                    "{\"questions\": [{\"id\": \"q1\", \"text\": \"What finish do you prefer for your foundation?\", \"options\": [\"Matte\", \"Dewy\", \"Natural\"]}]}\n"
+                    "Do NOT include markdown formatting like ```json ... ```. Just return the raw JSON object."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Search Query: {query}"
+            }
+        ]
+        
+        try:
+            response = client.chat(prompt, stream=False, show_thinking=False)
+            content = (response.get("content") or "").strip()
+            
+            if content.startswith("```json"): content = content[7:]
+            if content.startswith("```"): content = content[3:]
+            if content.endswith("```"): content = content[:-3]
+            
+            data_json = json.loads(content.strip())
+            questions = data_json.get("questions", [])
+            
+            return jsonify({"questions": questions})
+        except Exception as e:
+            logger.error(f"Infer questions error: {e}")
+            return jsonify({"questions": []})
+
+    @app.route("/api/infer_concerns", methods=["POST"])
+    def infer_concerns():
+        data = request.get_json() or {}
+        query = (data.get("query") or "").strip()
+
+        if not query:
+            return jsonify({"inferred_concerns": []})
+
+        api_key = os.getenv("SPARK_API_KEY")
+        if not api_key:
+            return jsonify({"error": "SPARK_API_KEY not set"}), 500
+
+        client = LLMClient(api_key=api_key)
+        
+        prompt = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a beauty expert system. Analyze the user's search query and infer any underlying skin concerns they might be trying to address. "
+                    "You MUST respond ONLY with a perfectly formatted JSON array of strings. "
+                    "You may ONLY choose from the following allowed values: 'acne', 'dry_skin', 'oily_skin', 'sensitive', 'aging', 'dark_spots', 'redness'. "
+                    "If the query does not strongly imply any of these concerns, return an empty array []. "
+                    "Do NOT include markdown formatting like ```json ... ```. Just return the raw JSON array."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Search Query: {query}"
+            }
+        ]
+        
+        try:
+            response = client.chat(prompt, stream=False, show_thinking=False)
+            content = (response.get("content") or "").strip()
+            
+            if content.startswith("```json"): content = content[7:]
+            if content.startswith("```"): content = content[3:]
+            if content.endswith("```"): content = content[:-3]
+            
+            inferred = json.loads(content.strip())
+            if not isinstance(inferred, list):
+                inferred = []
+                
+            allowed = {'acne', 'dry_skin', 'oily_skin', 'sensitive', 'aging', 'dark_spots', 'redness'}
+            inferred = [c for c in inferred if c in allowed]
+            
+            return jsonify({"inferred_concerns": inferred})
+        except Exception as e:
+            logger.error(f"Infer concerns error: {e}")
+            return jsonify({"inferred_concerns": []})
+
     @app.route("/api/search_ai", methods=["POST"])
     def search_ai():
         # Unified AI Search Route
@@ -73,7 +174,7 @@ def register_chat_route(app, search_products_fn):
 
         api_key = os.getenv("SPARK_API_KEY")
         if not api_key:
-            return jsonify({"error": "SPARK_API_KEY not set"}), 500
+            return jsonify({"error": "SPARK_API_KEY not set — add it to your .env file"}), 500
 
         client = LLMClient(api_key=api_key)
 
@@ -86,7 +187,7 @@ def register_chat_route(app, search_products_fn):
 
         # 2. Retrieve Products
         try:
-            search_result = search_products_fn(query=search_query, top_k=10, search_mode=search_mode)
+            search_result = search_products_fn(query=search_query, top_k=8, search_mode=search_mode)
             products = search_result.get("results", [])
             query_info = search_result.get("query_info", {})
         except Exception as e:
@@ -164,7 +265,7 @@ def register_chat_route(app, search_products_fn):
 
         api_key = os.getenv("SPARK_API_KEY")
         if not api_key:
-            return jsonify({"error": "SPARK_API_KEY not set"}), 500
+            return jsonify({"error": "SPARK_API_KEY not set — add it to your .env file"}), 500
 
         client = LLMClient(api_key=api_key)
 
