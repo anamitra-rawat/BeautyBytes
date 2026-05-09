@@ -4,11 +4,10 @@ import { soundEngine } from '../soundEffects'
 const TYPING_SUGGESTIONS = [
   'lipstick for a red carpet event',
   'eyeshadow for a glam look',
-  'moisturizer for dry skin',
+  'moisturizer for everyday',
   'perfume for a date night',
   'foundation for oily skin',
   'anti-aging serum',
-  'glass skin routine',
   'bold lip for a party',
 ]
 

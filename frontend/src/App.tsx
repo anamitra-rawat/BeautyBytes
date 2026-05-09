@@ -218,6 +218,7 @@ export default function App() {
   const [searched, setSearched] = useState(false)
   const [started, setStarted] = useState(false)
   const [selected, setSelected] = useState<Product | null>(null)
+  const [displayCount, setDisplayCount] = useState(6)
 
   const [showFilters, setShowFilters] = useState(false)
   const [useLlm, setUseLlm] = useState(false)
@@ -232,7 +233,8 @@ export default function App() {
   const [isWizardOpen, setIsWizardOpen] = useState(false)
   const [pendingQuestions, setPendingQuestions] = useState<ClarifyingQuestion[]>([])
   const [pendingConcerns, setPendingConcerns] = useState<string[] | null>(null)
-  
+  const [inferenceReasoning, setInferenceReasoning] = useState<string>('')
+
   const [loadingMessage, setLoadingMessage] = useState("AI is curating your perfect routine...")
   const questionsAskedRef = useRef('')
   const concernsInferredRef = useRef('')
@@ -294,11 +296,13 @@ export default function App() {
         })
         const data = await res.json()
         const inferred = data.inferred_concerns || []
+        const reasoning = data.reasoning || ""
         const newConcerns = inferred.filter((c: string) => !skinConcerns.includes(c))
 
         if (newConcerns.length > 0) {
           setPendingQuestions([])
           setPendingConcerns(newConcerns)
+          setInferenceReasoning(reasoning)
           setIsWizardOpen(true)
           setLoading(false)
           return // Stop execution, wait for modal
@@ -314,6 +318,7 @@ export default function App() {
     setSearched(true)
     setAiOverview(null)
     setLoadingProgress(0)
+    setDisplayCount(6)
 
     const progressInterval = setInterval(() => {
       setLoadingProgress(prev => {
@@ -385,7 +390,7 @@ export default function App() {
 
   const clearAll = () => {
     setQuery(''); setCategory(''); setMinPrice(''); setMaxPrice(''); setMinRating(''); setSkinConcerns([])
-    setResults([]); setSearched(false); setAiOverview(null)
+    setResults([]); setSearched(false); setAiOverview(null); setDisplayCount(6)
   }
 
   const toggleConcern = (key: string) => setSkinConcerns(p => p.includes(key) ? p.filter(c => c !== key) : [...p, key])
@@ -418,7 +423,7 @@ export default function App() {
     const updatedQuery = `${query} (Preferences: ${contextStr})`
     setQuery(updatedQuery)
     questionsAskedRef.current = updatedQuery
-    
+
     try {
       const res = await fetch('/api/infer_concerns', {
         method: 'POST',
@@ -427,11 +432,14 @@ export default function App() {
       })
       const data = await res.json()
       const inferred = data.inferred_concerns || []
+      const reasoning = data.reasoning || ""
       const newConcerns = inferred.filter((c: string) => !skinConcerns.includes(c))
-      
+
       setPendingConcerns(newConcerns)
+      setInferenceReasoning(reasoning)
     } catch (e) {
       setPendingConcerns([])
+      setInferenceReasoning('')
     }
   }
 
@@ -440,10 +448,11 @@ export default function App() {
     if (concernsToApply.length > 0) {
       setSkinConcerns(prev => [...prev, ...concernsToApply])
     }
-    
+
     setPendingQuestions([])
     setPendingConcerns(null)
-    
+    setInferenceReasoning('')
+
     // Proceed to final search
     concernsInferredRef.current = questionsAskedRef.current
     setTimeout(() => doSearch(true, questionsAskedRef.current), 0)
@@ -453,7 +462,8 @@ export default function App() {
     setIsWizardOpen(false)
     setPendingQuestions([])
     setPendingConcerns(null)
-    
+    setInferenceReasoning('')
+
     // Proceed without filters
     concernsInferredRef.current = query
     doSearch(true, questionsAskedRef.current || query)
@@ -518,11 +528,11 @@ export default function App() {
         {loading && (
           <div className="lipstick-loader-container">
             <div className="lipstick-loader-track">
-              <div 
+              <div
                 className="lipstick-loader-fill"
                 style={{ width: `${loadingProgress}%`, transition: 'width 0.1s linear' }}
               ></div>
-              <div 
+              <div
                 className="lipstick-loader-icon"
                 style={{ left: `${loadingProgress}%`, transition: 'left 0.1s linear' }}
               >💄</div>
@@ -544,7 +554,7 @@ export default function App() {
                     </div>
                   )}
                   <ProductGrid>
-                    {results.map(p => {
+                    {results.slice(0, displayCount).map(p => {
                       const quantity = getQuantity(p)
                       const wouldExceed = budgetNum > 0 && (cartTotal + p.price) > budgetNum
                       return (
@@ -563,6 +573,17 @@ export default function App() {
                       )
                     })}
                   </ProductGrid>
+                  {displayCount < results.length && (
+                    <div style={{ textAlign: 'center', marginTop: '32px', marginBottom: '16px' }}>
+                      <button
+                        className="modal-cart-btn add"
+                        onClick={() => setDisplayCount(c => c + 6)}
+                        style={{ width: 'auto', padding: '12px 32px' }}
+                      >
+                        Fetch more...
+                      </button>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div style={{ textAlign: 'center', marginTop: '40px', color: 'var(--text-muted)' }}>
@@ -614,6 +635,7 @@ export default function App() {
         <SmartWizardModal
           questions={pendingQuestions}
           pendingConcerns={pendingConcerns}
+          inferenceReasoning={inferenceReasoning}
           onQuestionsSubmit={handleWizardQuestionsSubmit}
           onComplete={handleWizardComplete}
           onClose={handleWizardClose}

@@ -5,6 +5,7 @@ export interface SmartWizardModalProps {
   questions: ClarifyingQuestion[]
   onQuestionsSubmit: (answers: Record<string, string>) => void
   pendingConcerns: string[] | null
+  inferenceReasoning?: string
   onComplete: (concernsToApply: string[]) => void
   onClose: () => void
 }
@@ -23,6 +24,7 @@ export default function SmartWizardModal({
   questions,
   onQuestionsSubmit,
   pendingConcerns,
+  inferenceReasoning,
   onComplete,
   onClose
 }: SmartWizardModalProps) {
@@ -137,12 +139,17 @@ export default function SmartWizardModal({
         {step === 'CONCERNS' && pendingConcerns && (
           <div style={{ animation: 'fadeIn 0.3s ease' }}>
             <h2 style={{ marginBottom: '12px', color: 'var(--text)' }}>Enhance Your Search?</h2>
-            <p style={{ color: 'var(--text-muted)', marginBottom: '24px', lineHeight: 1.5 }}>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
               AI is inferring you have these skin concerns based on your query:<br /><br />
               <strong style={{ fontSize: '1.1rem', color: 'var(--rose-dark)' }}>
                 {pendingConcerns.map(c => CONCERN_LABELS[c] || c).join('  ·  ')}
               </strong>
             </p>
+            {inferenceReasoning && (
+               <p style={{ fontStyle: 'italic', color: 'var(--text-muted)', marginBottom: '24px', fontSize: '0.9rem' }}>
+                 {inferenceReasoning}
+               </p>
+            )}
             <p style={{ color: 'var(--text)', marginBottom: '24px', fontWeight: 500 }}>
               Would you like to apply them as filters?
             </p>

@@ -27,9 +27,11 @@ def transform_query_for_search(client, user_message, filters_text=""):
             "role": "system",
             "content": (
                 "You are a search query optimizer for a BeautyBytes product catalog. "
-                "Transform the user's input into the best possible search query for an IR engine.\n"
+                "Transform the user's input into the most precise, distinctive search query for an IR engine.\n"
                 "Rules:\n"
                 "- Output ONLY the search query, nothing else (3-10 words)\n"
+                "- Focus on the most unique distinguishing features requested to ensure varied results.\n"
+                "- Do not use generic words like 'product', 'makeup', 'good', or 'best'.\n"
                 "- Incorporate specific product types, ingredients, and active filters.\n"
                 "- Do NOT include explanations."
             ),
@@ -126,10 +128,11 @@ def register_chat_route(app, search_products_fn):
                 "role": "system",
                 "content": (
                     "You are a beauty expert system. Analyze the user's search query and infer any underlying skin concerns they might be trying to address. "
-                    "You MUST respond ONLY with a perfectly formatted JSON array of strings. "
-                    "You may ONLY choose from the following allowed values: 'acne', 'dry_skin', 'oily_skin', 'sensitive', 'aging', 'dark_spots', 'redness'. "
-                    "If the query does not strongly imply any of these concerns, return an empty array []. "
-                    "Do NOT include markdown formatting like ```json ... ```. Just return the raw JSON array."
+                    "You MUST respond ONLY with a perfectly formatted JSON object containing exactly two keys:\n"
+                    "1. 'inferred_concerns': an array of strings. You may ONLY choose from: 'acne', 'dry_skin', 'oily_skin', 'sensitive', 'aging', 'dark_spots', 'redness'. "
+                    "If the query does not strongly imply any of these concerns, return an empty array [].\n"
+                    "2. 'reasoning': a string starting with 'AI thinks this because ' followed by a brief explanation of why these concerns were inferred based on the user's query. If no concerns are inferred, set this to an empty string.\n"
+                    "Do NOT include markdown formatting like ```json ... ```. Just return the raw JSON object."
                 )
             },
             {
@@ -146,17 +149,21 @@ def register_chat_route(app, search_products_fn):
             if content.startswith("```"): content = content[3:]
             if content.endswith("```"): content = content[:-3]
             
-            inferred = json.loads(content.strip())
+            inferred_data = json.loads(content.strip())
+            
+            inferred = inferred_data.get("inferred_concerns", [])
             if not isinstance(inferred, list):
                 inferred = []
                 
             allowed = {'acne', 'dry_skin', 'oily_skin', 'sensitive', 'aging', 'dark_spots', 'redness'}
             inferred = [c for c in inferred if c in allowed]
             
-            return jsonify({"inferred_concerns": inferred})
+            reasoning = inferred_data.get("reasoning", "")
+            
+            return jsonify({"inferred_concerns": inferred, "reasoning": reasoning})
         except Exception as e:
             logger.error(f"Infer concerns error: {e}")
-            return jsonify({"inferred_concerns": []})
+            return jsonify({"inferred_concerns": [], "reasoning": ""})
 
     @app.route("/api/search_ai", methods=["POST"])
     def search_ai():
@@ -187,7 +194,7 @@ def register_chat_route(app, search_products_fn):
 
         # 2. Retrieve Products
         try:
-            search_result = search_products_fn(query=search_query, top_k=8, search_mode=search_mode)
+            search_result = search_products_fn(query=search_query, top_k=24, search_mode=search_mode)
             products = search_result.get("results", [])
             query_info = search_result.get("query_info", {})
         except Exception as e:
@@ -205,17 +212,18 @@ def register_chat_route(app, search_products_fn):
             })
 
         # 3. Generate Overview and Reasoning
-        context_text = format_product_context(products)
+        top_products = products[:6]
+        context_text = format_product_context(top_products)
         prompt = [
             {
                 "role": "system",
                 "content": (
-                    "You are the BeautyBytes AI assistant. Analyze the retrieved products against the user's intent. "
+                    "You are the BeautyBytes AI assistant. Analyze the retrieved products against the user's specific intent. "
                     "You MUST respond ONLY with a perfectly formatted JSON object. "
                     "The JSON object must have exactly these keys:\n"
                     "1. \"overview\": A short, helpful paragraph summarizing your findings.\n"
-                    "2. \"recommended_product_ids\": A JSON array of the top 3 product IDs that best match.\n"
-                    "3. \"product_reasoning\": A JSON object mapping EACH provided product ID to a short 1-sentence explanation of why it was retrieved/recommended.\n\n"
+                    "2. \"recommended_product_ids\": A JSON array of the top 3 product IDs that best and most uniquely match the specific intent. Do not just pick the first ones; ensure diverse and highly relevant recommendations.\n"
+                    "3. \"product_reasoning\": A JSON object mapping EACH provided product ID to a short 1-sentence explanation of why it was retrieved/recommended, specifically relating it back to the user's exact needs.\n\n"
                     "Do NOT include markdown formatting like ```json ... ```. Just return the raw JSON text."
                 )
             },
@@ -239,8 +247,8 @@ def register_chat_route(app, search_products_fn):
             # Fallback
             ai_data = {
                 "overview": "Here are the top products I found based on your search.",
-                "recommended_product_ids": [p['id'] for p in products[:3]],
-                "product_reasoning": {p['id']: "Matched based on keywords." for p in products}
+                "recommended_product_ids": [p['id'] for p in top_products[:3]],
+                "product_reasoning": {p['id']: "Matched based on keywords." for p in top_products}
             }
 
         return jsonify({
@@ -272,9 +280,11 @@ def register_chat_route(app, search_products_fn):
         def generate():
             rag_system = (
                 "You are a helpful BeautyBytes follow-up assistant. "
-                "The user is looking at a specific set of products. Answer their question "
-                "referencing ONLY the provided product context. "
-                "Be concise, friendly, and helpful."
+                "The user is looking at a specific set of products. You can answer questions "
+                "referencing the provided product context. "
+                "If the user asks a more general beauty or skincare question, you can answer it using your general knowledge. "
+                "If you don't have the exact answer in the context, try to use your best judgment and inferences based on the user's intent. "
+                "Be concise, friendly, and helpful. Use simple bolding for emphasis if needed."
             )
 
             prompt = [

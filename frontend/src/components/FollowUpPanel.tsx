@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 
 interface Message {
   text: string
@@ -66,7 +67,7 @@ export default function FollowUpPanel({
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6))
-              
+
               if (data.content !== undefined) {
                 assistantText += data.content
                 setMessages(prev => [
@@ -119,8 +120,8 @@ export default function FollowUpPanel({
             )}
             {messages.map((msg, i) => (
               <div key={i} className={`chat-message ${msg.isUser ? 'user' : 'assistant'}`}>
-                <div className="chat-message-bubble">
-                  <p>{msg.text}</p>
+                <div className="chat-message-bubble markdown-body">
+                  {msg.isUser ? msg.text : <ReactMarkdown>{msg.text}</ReactMarkdown>}
                 </div>
               </div>
             ))}

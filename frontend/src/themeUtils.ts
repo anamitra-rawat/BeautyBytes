@@ -1,14 +1,14 @@
 export const DIMENSION_COLORS = [
-  '#ec4899', // pink-500
-  '#8b5cf6', // violet-500
-  '#3b82f6', // blue-500
-  '#10b981', // emerald-500
-  '#f59e0b', // amber-500
-  '#ef4444', // red-500
-  '#06b6d4', // cyan-500
-  '#84cc16', // lime-500
-  '#f43f5e', // rose-500
-  '#6366f1', // indigo-500
+  '#be185d', // pink-700
+  '#6d28d9', // violet-700
+  '#1d4ed8', // blue-700
+  '#047857', // emerald-700
+  '#b45309', // amber-700
+  '#b91c1c', // red-700
+  '#0e7490', // cyan-700
+  '#4d7c0f', // lime-700
+  '#be123c', // rose-700
+  '#4338ca', // indigo-700
 ];
 
 export function getDimensionColor(dimension: number) {
